@@ -1,0 +1,26 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "chime:CreateChannel",
+        "chime:DescribeChannel", 
+        "chime:CreateChannelMembership",
+        "chime:ListChannelMessages",
+        "chime:SendChannelMessage",
+        "chime:UpdateChannelMessage",
+        "chime:DeleteChannelMessage",
+        "chime:GetMessagingSessionEndpoint",
+        "chime:CreateAppInstanceUser",
+        "chime:DescribeAppInstanceUser"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "chime:AppInstanceArn": "arn:aws:chime:us-east-1:368289336576:app-instance/eb4983d2-04d5-4540-b087-70e0111cb9ce"
+        }
+      }
+    }
+  ]
+}
