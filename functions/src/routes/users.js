@@ -6,6 +6,12 @@ import { validate } from '../middleware/validation.js';
 import Joi from 'joi';
 
 const router = express.Router();
+const searchUsersSchema = Joi.object({
+  q: Joi.string().trim().min(1).max(200).required(),
+  limit: Joi.number().integer().min(1).max(100).default(20),
+  cursor: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).optional(),
+});
+
 
 // Schemas
 const upsertUserSchema = Joi.object({
@@ -70,6 +76,14 @@ router.get(
   '/users',
   validatePlatformToken,
   userController.listUsers
+);
+
+// Search users by name or email (prefix), optimized with indexes and cursor pagination
+router.get(
+  '/users/search',
+  validatePlatformToken,
+  validate(searchUsersSchema, 'query'),
+  userController.searchUsers
 );
 
 // Get user by ID

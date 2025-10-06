@@ -10,6 +10,60 @@ import Discussion from '../models/Discussion.js';
 import Comment from '../models/Comment.js';
 
 class UserController {
+  async searchUsers(req, res, next) {
+    try {
+      const { q = '', limit = 20, cursor } = req.query;
+
+      const sanitizedQuery = (q || '').toString().trim().toLowerCase();
+      if (!sanitizedQuery) {
+        return res.status(200).json({ users: [], nextCursor: null, total: 0 });
+      }
+
+      const baseFilter = { isActive: true, isDeleted: false };
+      const paginationFilter = cursor ? { _id: { $gt: new mongoose.Types.ObjectId(cursor) } } : {};
+      const searchFilter = {
+        $or: [
+          { email: { $regex: `^${escapeRegex(sanitizedQuery)}`, $options: 'i' } },
+          { nameLower: { $regex: `^${escapeRegex(sanitizedQuery)}` } },
+        ],
+      };
+
+      const finalFilter = { ...baseFilter, ...paginationFilter, ...searchFilter };
+
+      const docs = await User.find(finalFilter)
+        .sort({ _id: 1 })
+        .limit(Math.min(Number(limit) || 20, 100))
+        .select({
+          email: 1,
+          name: 1,
+          firstName: 1,
+          lastName: 1,
+          profilePicture: 1,
+          roles: 1,
+          createdAt: 1,
+        })
+        .lean();
+
+      const nextCursor = docs.length ? docs[docs.length - 1]._id : null;
+
+      return res.status(200).json({
+        users: docs.map(d => ({
+          id: d._id,
+          email: d.email,
+          name: d.name,
+          firstName: d.firstName,
+          lastName: d.lastName,
+          profilePicture: d.profilePicture,
+          roles: d.roles,
+          createdAt: d.createdAt,
+        })),
+        nextCursor,
+        total: docs.length,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
   async upsertUser(req, res, next) {
     try {
       // Minimal stub: acknowledge request

@@ -1,4 +1,4 @@
-import { ChimeSDKMessagingClient, CreateChannelCommand, CreateChannelMembershipCommand, ListChannelMessagesCommand, SendChannelMessageCommand, DescribeChannelCommand, ListChannelsCommand, ListChannelMembershipsCommand } from '@aws-sdk/client-chime-sdk-messaging'
+import { ChimeSDKMessagingClient, CreateChannelCommand, CreateChannelMembershipCommand, ListChannelMessagesCommand, SendChannelMessageCommand, DescribeChannelCommand, ListChannelsCommand, ListChannelMembershipsCommand, CreateChannelModeratorCommand, DeleteChannelMembershipCommand } from '@aws-sdk/client-chime-sdk-messaging'
 import { ChimeSDKIdentityClient, CreateAppInstanceUserCommand, DescribeAppInstanceUserCommand } from '@aws-sdk/client-chime-sdk-identity'
 import Channel from '../models/Channel.js'
 import Message from '../models/Message.js'
@@ -291,6 +291,18 @@ async function createChannel({ name, description, isPrivate, createdByUser, isDe
     ChimeBearer: creatorArn
   }))
   logger.info('[Chime] Creator added as channel member', { channelArn, creatorArn })
+  
+  // Promote creator to channel moderator in Chime
+  try {
+    await messagingClient.send(new CreateChannelModeratorCommand({
+      ChannelArn: channelArn,
+      ChannelModeratorArn: creatorArn,
+      ChimeBearer: creatorArn
+    }))
+    logger.info('[Chime] Creator promoted to channel moderator', { channelArn, creatorArn })
+  } catch (err) {
+    logger.warn('[Chime] Failed to promote creator to moderator (continuing)', { error: err?.message, channelArn })
+  }
   return channel
 }
 

@@ -17,7 +17,7 @@ import jwt from 'jsonwebtoken';
  */
 class AuthController {
   // Ensure default general channel exists and user is a member (best-effort)
-  async ensureGeneralForUser(user) {
+  static async ensureGeneralForUser(user) {
     try {
       let channel = await Channel.findOne({ isDefaultGeneral: true })
       if (!channel) {
@@ -83,7 +83,7 @@ class AuthController {
         throw new AppError('User account is not active', 403, 'INACTIVE_ACCOUNT');
       }
       // Best-effort: ensure general channel and membership on first login
-      await this.ensureGeneralForUser(user)
+      await AuthController.ensureGeneralForUser(user)
       
       // Create session and tokens
       const deviceInfo = {
@@ -207,13 +207,13 @@ class AuthController {
         logger.info('Auth0: user login (code-exchange)', { userId: user._id.toString(), email });
       }
       // Best-effort: ensure general channel and membership on login
-      await this.ensureGeneralForUser(user)
+      await AuthController.ensureGeneralForUser(user)
 
       if (!user.isActive || user.isDeleted) {
         throw new AppError('User account is not active', 403, 'INACTIVE_ACCOUNT');
       }
       // Best-effort: ensure general channel and membership on login
-      await this.ensureGeneralForUser(user)
+      await AuthController.ensureGeneralForUser(user)
 
       // Issue platform tokens
       const deviceInfo = {

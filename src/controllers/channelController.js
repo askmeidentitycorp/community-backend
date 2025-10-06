@@ -34,6 +34,38 @@ export const addMember = async (req, res, next) => {
   }
 }
 
+export const removeMember = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const { userId } = req.body
+    const user = await User.findById(userId)
+    if (!user) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+    const channel = await Channel.findById(channelId)
+    if (!channel || !channel?.chime?.channelArn) return next(new AppError('Channel not found or not mapped to Chime', 404, 'NOT_FOUND'))
+
+    // Remove from Chime (best effort)
+    try {
+      const userArn = await chimeMessagingService.ensureAppInstanceUser(user)
+      await (await import('../services/chimeMessagingService.js')).default // ensure module is loaded
+      const { ChimeSDKMessagingClient, DeleteChannelMembershipCommand } = await import('@aws-sdk/client-chime-sdk-messaging')
+      const REGION = process.env.AWS_REGION
+      const client = new ChimeSDKMessagingClient({ region: REGION })
+      await client.send(new DeleteChannelMembershipCommand({
+        ChannelArn: channel.chime.channelArn,
+        MemberArn: userArn,
+        ChimeBearer: userArn
+      }))
+    } catch {}
+
+    // Remove from Mongo
+    await Channel.updateOne({ _id: channelId }, { $pull: { members: user._id, admins: user._id } })
+    const updated = await Channel.findById(channelId)
+    return res.json({ channel: updated })
+  } catch (err) {
+    return next(err)
+  }
+}
+
 export const ensureGeneralAndJoin = async (req, res, next) => {
   try {
     console.log('[Controller] ensureGeneralAndJoin start', { userId: req.auth?.userId })

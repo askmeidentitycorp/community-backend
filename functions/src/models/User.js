@@ -30,6 +30,12 @@ const UserSchema = new Schema(
       required: true,
       trim: true,
     },
+    // Lowercased copy of name for efficient case-insensitive search
+    nameLower: {
+      type: String,
+      trim: true,
+      index: true,
+    },
     roles: {
       type: [String],
       enum: ['super_admin', 'moderator', 'member'],
@@ -94,6 +100,18 @@ UserSchema.index({ isActive: 1, isDeleted: 1 });
 UserSchema.index({ lastLogin: -1 });
 UserSchema.index({ likedDiscussions: 1 });
 UserSchema.index({ likedComments: 1 });
+// Search-related indexes
+UserSchema.index({ nameLower: 1 });
+UserSchema.index({ isActive: 1, isDeleted: 1, nameLower: 1 });
+UserSchema.index({ isActive: 1, isDeleted: 1, email: 1 });
+
+// Keep nameLower in sync
+UserSchema.pre('save', function(next) {
+  if (this.isModified('name')) {
+    this.nameLower = typeof this.name === 'string' ? this.name.toLowerCase() : this.name;
+  }
+  next();
+});
 
 // Virtual for is_authenticated
 UserSchema.virtual('is_authenticated').get(function() {

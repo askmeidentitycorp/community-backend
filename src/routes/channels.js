@@ -1,6 +1,7 @@
 import express from 'express'
 import { validatePlatformToken } from '../middleware/auth.js'
-import { createChannel, addMember, listMessages, sendMessage, getChannel, ensureGeneralAndJoin, listChannels, mirrorMessage } from '../controllers/channelController.js'
+import { requireRole, ROLES } from '../middleware/rbac.js'
+import { createChannel, addMember, removeMember, listMessages, sendMessage, getChannel, ensureGeneralAndJoin, listChannels, mirrorMessage } from '../controllers/channelController.js'
 
 const router = express.Router()
 
@@ -11,9 +12,10 @@ router.get('/channels/test', (req, res) => {
 
 // Channels CRUD (minimal for now)
 router.get('/channels', validatePlatformToken, listChannels)
-router.post('/channels', validatePlatformToken, createChannel)
+router.post('/channels', validatePlatformToken, requireRole([ROLES.SUPER_ADMIN]), createChannel)
 router.get('/channels/:channelId', validatePlatformToken, getChannel)
 router.post('/channels/:channelId/members', validatePlatformToken, addMember)
+router.delete('/channels/:channelId/members', validatePlatformToken, removeMember)
 router.post('/channels/general/ensure', validatePlatformToken, ensureGeneralAndJoin)
 
 // Channel messages
