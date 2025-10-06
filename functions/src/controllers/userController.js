@@ -316,3 +316,7 @@ class UserController {
 }
 
 export default new UserController();
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\\\$&');
+}
