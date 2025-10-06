@@ -1,0 +1,157 @@
+import jwt from 'jsonwebtoken';
+import jwksRsa from 'jwks-rsa';
+import { AppError } from '../utils/errorHandler.js';
+import auth0Config from '../config/auth0.js';
+import { logger } from '../utils/logger.js';
+import { PERMISSIONS, ROLES } from './rbac.js';
+
+// Setup JWT validation for Auth0 tokens
+const jwksClient = jwksRsa({
+  jwksUri: `https://${auth0Config.domain}/.well-known/jwks.json`,
+  cache: true,
+  rateLimit: true,
+});
+
+// Helper to get Auth0 signing key
+const getAuth0SigningKey = async (header) => {
+  if (!header.kid) throw new Error('Missing kid in token header');
+  
+  try {
+    const key = await jwksClient.getSigningKey(header.kid);
+    return key.getPublicKey();
+  } catch (error) {
+    logger.error('Error getting Auth0 signing key:', error);
+    throw new Error('Unable to verify token');
+  }
+};
+
+// Validate Auth0 Access Token
+export const validateAuth0Token = async (req, res, next) => {
+  try {
+    logger.info('Middleware: validateAuth0Token start');
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next(new AppError('No token provided', 401, 'UNAUTHORIZED'));
+    }
+
+    const token = authHeader.split(' ')[1];
+    
+    // Verify and decode the token
+    const decoded = await new Promise((resolve, reject) => {
+      jwt.verify(
+        token,
+        async (header, callback) => {
+          try {
+            const key = await getAuth0SigningKey(header);
+            callback(null, key);
+          } catch (err) {
+            callback(err);
+          }
+        },
+        {
+          audience: auth0Config.audience,
+          issuer: auth0Config.issuer,
+        },
+        (err, decoded) => {
+          if (err) {
+            reject(err);
+          } else {
+            resolve(decoded);
+          }
+        }
+      );
+    });
+
+    // No tenant validation needed - Auth0 handles user authentication
+    
+    // Attach Auth0 decoded token to request for later use
+    req.auth0Token = decoded;
+    logger.info('Middleware: validateAuth0Token success', { sub: decoded?.sub });
+    
+    next();
+  } catch (error) {
+    logger.error('Middleware: validateAuth0Token error', { error: error?.message });
+    return next(new AppError('Invalid token', 401, 'INVALID_TOKEN'));
+  }
+};
+
+// Validate our platform JWT
+export const validatePlatformToken = (req, res, next) => {
+  try {
+    logger.info('Middleware: validatePlatformToken start');
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next(new AppError('No token provided', 401, 'UNAUTHORIZED'));
+    }
+
+    const token = authHeader.split(' ')[1];
+    
+    // Verify using our JWT_SECRET
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // No tenant validation needed
+    
+    // Attach auth info to request (support both userId and user_id)
+    const roles = decoded.roles || [];
+    // Derive permissions from roles if explicit permissions not present
+    let permissions = decoded.permissions || [];
+    if (!permissions.length && roles.length) {
+      const derived = new Set();
+      roles.forEach(r => {
+        if (r === ROLES.SUPER_ADMIN) {
+          derived.add('*');
+        } else if (PERMISSIONS[r]) {
+          PERMISSIONS[r].forEach(p => derived.add(p));
+        }
+      });
+      permissions = Array.from(derived);
+    }
+    req.auth = {
+      userId: decoded.userId || decoded.user_id,
+      roles,
+      permissions,
+    };
+    logger.info('Middleware: validatePlatformToken success', { userId: decoded?.userId });
+    
+    next();
+  } catch (error) {
+    logger.error('Middleware: validatePlatformToken error', { error: error?.message });
+    return next(new AppError('Invalid token', 401, 'INVALID_TOKEN'));
+  }
+};
+
+// Best-effort token parsing: does not error if missing/invalid; just proceeds unauthenticated
+export const tryValidatePlatformToken = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return next();
+    }
+
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const roles = decoded.roles || [];
+    let permissions = decoded.permissions || [];
+    if (!permissions.length && roles.length) {
+      const derived = new Set();
+      roles.forEach(r => {
+        if (r === ROLES.SUPER_ADMIN) {
+          derived.add('*');
+        } else if (PERMISSIONS[r]) {
+          PERMISSIONS[r].forEach(p => derived.add(p));
+        }
+      });
+      permissions = Array.from(derived);
+    }
+    req.auth = {
+      userId: decoded.userId || decoded.user_id,
+      roles,
+      permissions,
+    };
+    return next();
+  } catch (error) {
+    // Ignore errors and proceed without auth context
+    return next();
+  }
+};

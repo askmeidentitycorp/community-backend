@@ -101,6 +101,75 @@ npm run dev
 - `POST /api/tenants/:tenantId/auth/sessions/revoke`: Revoke session
 - `POST /api/tenants/:tenantId/auth/sessions/revoke-all`: Revoke all sessions
 
+## Env values 
+PORT=3000
+MONGODB_URI=
+REDIS_URL=
+JWT_SECRET=devsecret
+JWT_ACCESS_TTL=3600
+JWT_REFRESH_TTL=604800
+AUTH0_DOMAIN=
+AUTH0_AUDIENCE=
+AUTH0_CLIENT_ID=
+AUTH0_CLIENT_SECRET=
+AUTH0_ISSUER=
+AUTH0_TENANT_CLAIM=
+FRONTEND_BASE_URL=
+BACKEND_BASE_URL=
+AWS_REGION=us-east-1
+CHIME_APP_INSTANCE_ARN=
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+
+
 ## License
 
 [License details]
+
+# Production Environment Variables for Cloud Run
+# Copy this to .env.production and fill in your actual values
+
+# Application Configuration
+NODE_ENV=production
+PORT=8080
+
+# Tenant Configuration
+TENANT_ID=tenant1
+TENANT_NAME=Tenant 1
+MONGODB_DATABASE=tenant1_discussion
+
+# Database Configuration
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net
+# Alternative: MONGODB_URI=mongodb://username:password@host:port
+
+# Redis Configuration
+REDIS_URL=redis://username:password@host:port
+REDIS_SESSION_TTL=86400
+REDIS_CACHE_TTL=3600
+
+# JWT Configuration
+JWT_SECRET=your-super-secret-jwt-key-here
+JWT_ACCESS_TTL=3600
+JWT_REFRESH_TTL=604800
+JWT_ACCESS_TOKEN_LIFETIME=3600
+JWT_REFRESH_TOKEN_LIFETIME=604800
+
+# Auth0 Configuration
+AUTH0_DOMAIN=your-domain.auth0.com
+AUTH0_CLIENT_ID=your-client-id
+AUTH0_CLIENT_SECRET=your-client-secret
+AUTH0_AUDIENCE=your-audience
+AUTH0_ISSUER=https://your-domain.auth0.com/
+AUTH0_TENANT_CLAIM=https://app.example.com/tenantId
+
+# AWS Configuration
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your-access-key
+AWS_SECRET_ACCESS_KEY=your-secret-key
+
+# Application URLs
+BACKEND_BASE_URL=https://your-service-name-hash-region.a.run.app
+FRONTEND_BASE_URL=https://your-frontend-domain.com
+
+# CORS Configuration (for production)
+CORS_ORIGIN=https://your-frontend-domain.com
