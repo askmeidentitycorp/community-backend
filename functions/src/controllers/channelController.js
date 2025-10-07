@@ -25,9 +25,12 @@ export const addMember = async (req, res, next) => {
   try {
     const { channelId } = req.params
     const { userId } = req.body
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
     const user = await User.findById(userId)
     if (!user) return next(new AppError('User not found', 404, 'NOT_FOUND'))
-    const channel = await chimeMessagingService.addMember({ channelId, user })
+    const operator = await User.findById(req.auth.userId)
+    if (!operator) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+    const channel = await chimeMessagingService.addMember({ channelId, user, operatorUser: operator })
     return res.json({ channel })
   } catch (err) {
     return next(err)
@@ -45,14 +48,18 @@ export const removeMember = async (req, res, next) => {
 
     // Remove from Chime (best effort)
     try {
-      const userArn = await chimeMessagingService.ensureAppInstanceUser(user)
+      // Use operator (requester) as ChimeBearer
+      if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+      const operator = await User.findById(req.auth.userId)
+      const operatorArn = await chimeMessagingService.ensureAppInstanceUser(operator)
+      const memberArn = await chimeMessagingService.ensureAppInstanceUser(user)
       const { ChimeSDKMessagingClient, DeleteChannelMembershipCommand } = await import('@aws-sdk/client-chime-sdk-messaging')
       const REGION = process.env.AWS_REGION
       const client = new ChimeSDKMessagingClient({ region: REGION })
       await client.send(new DeleteChannelMembershipCommand({
         ChannelArn: channel.chime.channelArn,
-        MemberArn: userArn,
-        ChimeBearer: userArn
+        MemberArn: memberArn,
+        ChimeBearer: operatorArn
       }))
     } catch {}
 

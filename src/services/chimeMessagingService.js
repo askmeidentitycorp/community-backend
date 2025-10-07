@@ -306,22 +306,25 @@ async function createChannel({ name, description, isPrivate, createdByUser, isDe
   return channel
 }
 
-async function addMember({ channelId, user }) {
-  logger.info('[Chime] addMember start', { channelId, userId: user._id })
+async function addMember({ channelId, user, operatorUser }) {
+  // Default operator to the same user if not explicitly provided
+  const actingUser = operatorUser || user
+  logger.info('[Chime] addMember start', { channelId, userId: user._id, operatorUserId: actingUser._id })
   const channel = await Channel.findById(channelId)
   if (!channel || !channel?.chime?.channelArn) {
     logger.error('[Chime] Channel not found or not mapped to Chime', { channelId, hasChannel: !!channel, hasChannelArn: !!channel?.chime?.channelArn })
     throw new Error('Channel not found or not mapped to Chime')
   }
-  const userArn = await ensureAppInstanceUser(user)
-  logger.info('[Chime] Adding member to Chime channel', { channelArn: channel.chime.channelArn, userArn })
-  logger.info('[Chime] Using ChimeBearer for addMember', { chimeBearer: userArn })
+  const memberArn = await ensureAppInstanceUser(user)
+  const operatorArn = await ensureAppInstanceUser(actingUser)
+  logger.info('[Chime] Adding member to Chime channel', { channelArn: channel.chime.channelArn, memberArn, operatorArn })
+  logger.info('[Chime] Using ChimeBearer for addMember', { chimeBearer: operatorArn })
   
   await messagingClient.send(new CreateChannelMembershipCommand({
     ChannelArn: channel.chime.channelArn,
-    MemberArn: userArn,
+    MemberArn: memberArn,
     Type: 'DEFAULT',
-    ChimeBearer: userArn
+    ChimeBearer: operatorArn
   }))
   logger.info('[Chime] Member added to Chime channel successfully')
   
