@@ -6,6 +6,10 @@ import { validate } from '../middleware/validation.js';
 import Joi from 'joi';
 
 const router = express.Router();
+const activitySchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(100).default(20),
+  cursor: Joi.string().optional(),
+});
 const searchUsersSchema = Joi.object({
   q: Joi.string().trim().min(1).max(200).required(),
   limit: Joi.number().integer().min(1).max(100).default(20),
@@ -91,6 +95,21 @@ router.get(
   '/users/:userId',
   validatePlatformToken,
   userController.getUser
+);
+
+// Get current user (self)
+router.get(
+  '/users/me',
+  validatePlatformToken,
+  userController.getSelf
+);
+
+// Unified activity feed (discussions + comments)
+router.get(
+  '/users/:userId/activity',
+  validatePlatformToken,
+  validate(activitySchema, 'query'),
+  userController.getUserActivity
 );
 
 // Update self

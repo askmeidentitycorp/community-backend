@@ -83,7 +83,157 @@ class UserController {
 
   async getUser(req, res, next) {
     try {
-      res.status(200).json({ message: 'getUser not implemented yet' });
+      const { userId } = req.params;
+      if (!userId) {
+        throw new AppError('User ID is required', 400, 'BAD_REQUEST');
+      }
+
+      let user = null;
+      if (mongoose.isValidObjectId(userId)) {
+        user = await User.findOne({ _id: userId, isDeleted: false }).lean();
+      }
+      if (!user) {
+        user = await User.findOne({ email: userId.toLowerCase(), isDeleted: false }).lean();
+      }
+
+      if (!user) {
+        throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+      }
+
+      return res.status(200).json({
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          title: user.title,
+          department: user.department,
+          bio: user.bio,
+          location: user.location,
+          avatar: user.profilePicture,
+          coverImage: user.coverImage,
+          skills: user.skills || [],
+          roles: user.roles,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getSelf(req, res, next) {
+    try {
+      if (!req.auth) {
+        throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+      }
+      const userId = req.auth.userId;
+
+      let user = null;
+      // 1) Primary: resolve via active Session using presented access token
+      const authHeader = req.headers?.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+      if (token) {
+        const session = await Session.findOne({ accessToken: token, isActive: true, accessTokenExpiresAt: { $gt: new Date() } }).lean();
+        if (session && session.user) {
+          user = await User.findOne({ _id: session.user, isDeleted: false }).lean();
+        }
+      }
+      // 2) Fallback: by Mongo _id
+      if (!user && mongoose.isValidObjectId(userId)) {
+        user = await User.findOne({ _id: userId, isDeleted: false }).lean();
+      }
+      // 3) Final: by auth0Id
+      if (!user && userId) {
+        user = await User.findOne({ auth0Id: userId, isDeleted: false }).lean();
+      }
+      if (!user) {
+        return res.status(404).json({ error: { code: 'USER_NOT_FOUND', message: 'User not found' } });
+      }
+      return res.status(200).json({
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          title: user.title,
+          department: user.department,
+          bio: user.bio,
+          location: user.location,
+          avatar: user.profilePicture,
+          coverImage: user.coverImage,
+          skills: user.skills || [],
+          roles: user.roles,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getUserActivity(req, res, next) {
+    try {
+      const { userId } = req.params;
+      const { limit = 20, cursor } = req.query;
+
+      if (!userId) throw new AppError('User ID is required', 400, 'BAD_REQUEST');
+
+      const lim = Math.min(Number(limit) || 20, 100);
+      const authorFilter = { authorId: userId };
+      const createdAtCursor = cursor ? new Date(cursor) : null;
+      const baseSort = { createdAt: -1 };
+
+      const discussionQuery = Discussion.find(
+        createdAtCursor ? { ...authorFilter, createdAt: { $lt: createdAtCursor } } : authorFilter
+      )
+        .sort(baseSort)
+        .limit(lim)
+        .lean();
+
+      const commentQuery = Comment.find(
+        createdAtCursor ? { ...authorFilter, createdAt: { $lt: createdAtCursor } } : authorFilter
+      )
+        .sort(baseSort)
+        .limit(lim)
+        .lean();
+
+      const [discussions, comments] = await Promise.all([discussionQuery, commentQuery]);
+
+      const items = [
+        ...discussions.map(d => ({
+          type: 'post',
+          id: d._id,
+          createdAt: d.createdAt,
+          data: {
+            discussionId: d._id,
+            title: d.title,
+            tags: d.tags,
+            likesCount: (d.likes || []).length,
+            dislikesCount: (d.dislikes || []).length,
+          },
+        })),
+        ...comments.map(c => ({
+          type: 'comment',
+          id: c._id,
+          createdAt: c.createdAt,
+          data: {
+            discussionId: c.discussionId,
+            content: c.content,
+            likesCount: (c.likes || []).length,
+            dislikesCount: (c.dislikes || []).length,
+          },
+        })),
+      ]
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, lim);
+
+      const nextCursor = items.length ? items[items.length - 1].createdAt : null;
+      return res.status(200).json({ items, nextCursor, total: items.length });
     } catch (error) {
       next(error);
     }

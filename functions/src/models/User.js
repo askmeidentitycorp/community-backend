@@ -30,6 +30,16 @@ const UserSchema = new Schema(
       required: true,
       trim: true,
     },
+    title: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+    },
+    department: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+    },
     // Lowercased copy of name for efficient case-insensitive search
     nameLower: {
       type: String,
@@ -49,9 +59,31 @@ const UserSchema = new Schema(
       type: String,
       maxlength: 2000,
     },
+    location: {
+      type: String,
+      trim: true,
+      maxlength: 120,
+    },
     profilePicture: {
       type: String,
       trim: true,
+    },
+    // Binary avatar storage
+    avatarBinary: {
+      type: Buffer,
+      select: false,
+    },
+    avatarContentType: {
+      type: String,
+      select: false,
+    },
+    coverImage: {
+      type: String,
+      trim: true,
+    },
+    skills: {
+      type: [String],
+      default: [],
     },
     timezone: {
       type: String,

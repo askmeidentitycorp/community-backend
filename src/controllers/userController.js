@@ -88,9 +88,157 @@ class UserController {
     }
   }
 
+  async getSelf(req, res, next) {
+    try {
+      const hasAuthHeader = !!(req.headers && req.headers.authorization);
+      logger.info('UserController.getSelf: start', {
+        hasAuthHeader,
+        authPresent: !!req.auth,
+      });
+
+      if (!req.auth) {
+        logger.warn('UserController.getSelf: missing req.auth');
+        throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+      }
+
+      const userId = req.auth.userId;
+      logger.info('UserController.getSelf: resolved userId from token', { userId });
+
+      let user = null;
+      let identifierTried = userId;
+
+      // 1) Primary: resolve via active Session using presented access token
+      const authHeader = req.headers?.authorization || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : null;
+      if (token) {
+        const session = await Session.findOne({ accessToken: token, isActive: true, accessTokenExpiresAt: { $gt: new Date() } }).lean();
+        if (session && session.user) {
+          identifierTried = session.user;
+          user = await User.findOne({ _id: session.user, isDeleted: false }).lean();
+        }
+      }
+
+      // 2) Fallback: by Mongo _id when token carries an ObjectId
+      if (!user && mongoose.isValidObjectId(userId)) {
+        identifierTried = userId;
+        user = await User.findOne({ _id: userId, isDeleted: false }).lean();
+      }
+
+      // 3) Final: external subject identifiers stored as auth0Id
+      if (!user && userId) {
+        identifierTried = userId;
+        user = await User.findOne({ auth0Id: userId, isDeleted: false }).lean();
+      }
+      if (!user) {
+        logger.warn('UserController.getSelf: user not found for identifier', { identifier: identifierTried });
+        return res.status(404).json({ error: { code: 'USER_NOT_FOUND', message: 'User not found', identifier: String(identifierTried || '') } });
+      }
+      logger.info('UserController.getSelf: user loaded', { id: user._id.toString(), email: user.email });
+      // Prepare optional avatar data URL (kept small; avatarBinary is <=10KB by our contract)
+      let avatarDataUrl;
+      try {
+        const avatarDoc = await User.findById(user._id).select('+avatarBinary +avatarContentType').lean();
+        if (avatarDoc?.avatarBinary && avatarDoc?.avatarContentType) {
+          const base64 = Buffer.from(avatarDoc.avatarBinary).toString('base64');
+          avatarDataUrl = `data:${avatarDoc.avatarContentType};base64,${base64}`;
+        }
+      } catch {}
+      return res.status(200).json({
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          title: user.title,
+          department: user.department,
+          bio: user.bio,
+          location: user.location,
+          avatar: user.profilePicture,
+          avatarDataUrl,
+          coverImage: user.coverImage,
+          skills: user.skills || [],
+          roles: user.roles,
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      });
+    } catch (error) {
+      logger.error('UserController.getSelf: error', { message: error?.message, code: error?.code });
+      next(error);
+    }
+  }
+
   async getUser(req, res, next) {
     try {
-      res.status(200).json({ message: 'getUser not implemented yet' });
+      const { userId } = req.params;
+      if (!userId) {
+        throw new AppError('User ID is required', 400, 'BAD_REQUEST');
+      }
+
+      let user = null;
+      if (mongoose.isValidObjectId(userId)) {
+        user = await User.findOne({ _id: userId, isDeleted: false }).lean();
+      }
+      if (!user) {
+        // Allow lookup by email as a fallback if not an ObjectId
+        user = await User.findOne({ email: userId.toLowerCase(), isDeleted: false }).lean();
+      }
+
+      if (!user) {
+        throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+      }
+
+      // Include optional avatar data URL
+      let avatarDataUrl;
+      try {
+        const avatarDoc = await User.findById(user._id).select('+avatarBinary +avatarContentType').lean();
+        if (avatarDoc?.avatarBinary && avatarDoc?.avatarContentType) {
+          const base64 = Buffer.from(avatarDoc.avatarBinary).toString('base64');
+          avatarDataUrl = `data:${avatarDoc.avatarContentType};base64,${base64}`;
+        }
+      } catch {}
+      return res.status(200).json({
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          title: user.title,
+          department: user.department,
+          bio: user.bio,
+          location: user.location,
+          avatar: user.profilePicture,
+          avatarDataUrl,
+          roles: user.roles,
+          analytics: {
+            profileViews: 0,
+            postImpressions: 0,
+            searchAppearances: 0,
+          },
+          createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getUserAvatar(req, res, next) {
+    try {
+      const { userId } = req.params;
+      if (!userId) {
+        throw new AppError('User ID is required', 400, 'BAD_REQUEST');
+      }
+      const user = await User.findById(userId).select('+avatarBinary +avatarContentType');
+      if (!user || !user.avatarBinary || !user.avatarContentType) {
+        return res.status(404).send();
+      }
+      res.setHeader('Content-Type', user.avatarContentType);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      return res.status(200).send(user.avatarBinary);
     } catch (error) {
       next(error);
     }
@@ -98,7 +246,7 @@ class UserController {
 
   async updateSelf(req, res, next) {
     try {
-      const { name, profile, preferences } = req.body;
+      const { name, title, department, profile, preferences } = req.body;
       
       // Get user ID from token
       if (!req.auth) {
@@ -115,15 +263,20 @@ class UserController {
         throw new AppError('User not found', 404, 'USER_NOT_FOUND');
       }
       
-      // Update fields
-      if (name) user.name = name;
+      // Update top-level editable fields
+      if (name) user.name = name; // kept for future admin control; route ensures self-only edits
+      if (title !== undefined) user.title = title;
+      if (department !== undefined) user.department = department;
       
       // Update profile (if provided)
       if (profile) {
-        user.profile = {
-          ...(user.profile || {}),
-          ...profile,
-        };
+        const { bio, location, coverImage, skills, socialLinks } = profile;
+        if (bio !== undefined) user.bio = bio;
+        if (location !== undefined) user.location = location;
+        if (coverImage !== undefined) user.coverImage = coverImage;
+        if (Array.isArray(skills)) user.skills = skills;
+        // Persist socialLinks inside a nested profile object if needed later
+        user.profile = { ...(user.profile || {}), ...(socialLinks ? { socialLinks } : {}) };
       }
       
       // Update preferences (if provided)
@@ -141,13 +294,53 @@ class UserController {
         id: user._id,
         email: user.email,
         name: user.name,
-        avatar: user.avatar,
+        avatar: user.profilePicture,
+        title: user.title,
+        department: user.department,
+        bio: user.bio,
+        location: user.location,
+        coverImage: user.coverImage,
+        skills: user.skills,
         profile: user.profile,
         preferences: user.preferences,
         roles: user.roles,
         status: user.status,
         updatedAt: user.updatedAt,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async uploadAvatar(req, res, next) {
+    try {
+      if (!req.auth) {
+        throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+      }
+      const userId = req.auth.userId;
+      const { dataUrl } = req.body;
+      // dataUrl format: data:image/png;base64,AAAA
+      const match = /^data:(.+);base64,(.*)$/.exec(dataUrl || '');
+      if (!match) {
+        throw new AppError('Invalid data URL', 400, 'BAD_REQUEST');
+      }
+      const contentType = match[1];
+      const base64 = match[2];
+      const buffer = Buffer.from(base64, 'base64');
+      if (buffer.length > 10 * 1024) {
+        throw new AppError('Avatar too large (>10KB) after compression', 413, 'PAYLOAD_TOO_LARGE');
+      }
+
+      const user = await User.findOne({ _id: userId });
+      if (!user) {
+        throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+      }
+      user.avatarBinary = buffer;
+      user.avatarContentType = contentType;
+      // Optional: keep a tiny data URL placeholder in profilePicture for quick display if needed
+      user.profilePicture = '';
+      await user.save();
+      return res.status(200).json({ success: true });
     } catch (error) {
       next(error);
     }
@@ -316,6 +509,145 @@ class UserController {
         })),
         total: comments.length,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getUserActivity(req, res, next) {
+    try {
+      const { userId } = req.params;
+      const { limit = 20, cursor } = req.query;
+
+      if (!userId) throw new AppError('User ID is required', 400, 'BAD_REQUEST');
+
+      const lim = Math.min(Number(limit) || 20, 100);
+
+      const authorFilter = { authorId: userId };
+      const createdAtCursor = cursor ? new Date(cursor) : null;
+      const baseSort = { createdAt: -1 };
+
+      const discussionQuery = Discussion.find(
+        createdAtCursor ? { ...authorFilter, createdAt: { $lt: createdAtCursor } } : authorFilter
+      )
+        .sort(baseSort)
+        .limit(lim)
+        .lean();
+
+      const commentQuery = Comment.find(
+        createdAtCursor ? { ...authorFilter, createdAt: { $lt: createdAtCursor } } : authorFilter
+      )
+        .sort(baseSort)
+        .limit(lim)
+        .lean();
+
+      // Also include liked/disliked discussions and comments using user model references
+      const userDoc = await User.findOne({ _id: userId }, { likedDiscussions: 1, dislikedDiscussions: 1, likedComments: 1, dislikedComments: 1 }).lean();
+
+      const likedDiscussionIds = (userDoc?.likedDiscussions || []).slice(0, lim);
+      const dislikedDiscussionIds = (userDoc?.dislikedDiscussions || []).slice(0, lim);
+      const likedCommentIds = (userDoc?.likedComments || []).slice(0, lim);
+      const dislikedCommentIds = (userDoc?.dislikedComments || []).slice(0, lim);
+
+      const likedDiscussionsQuery = likedDiscussionIds.length
+        ? Discussion.find({ _id: { $in: likedDiscussionIds } }).sort(baseSort).limit(lim).lean()
+        : Promise.resolve([]);
+      const dislikedDiscussionsQuery = dislikedDiscussionIds.length
+        ? Discussion.find({ _id: { $in: dislikedDiscussionIds } }).sort(baseSort).limit(lim).lean()
+        : Promise.resolve([]);
+      const likedCommentsQuery = likedCommentIds.length
+        ? Comment.find({ _id: { $in: likedCommentIds } }).sort(baseSort).limit(lim).lean()
+        : Promise.resolve([]);
+      const dislikedCommentsQuery = dislikedCommentIds.length
+        ? Comment.find({ _id: { $in: dislikedCommentIds } }).sort(baseSort).limit(lim).lean()
+        : Promise.resolve([]);
+
+      const [discussions, comments, likedDiscussions, dislikedDiscussions, likedComments, dislikedComments] = await Promise.all([
+        discussionQuery,
+        commentQuery,
+        likedDiscussionsQuery,
+        dislikedDiscussionsQuery,
+        likedCommentsQuery,
+        dislikedCommentsQuery,
+      ]);
+
+      const items = [
+        ...discussions.map(d => ({
+          type: 'post',
+          id: d._id,
+          createdAt: d.createdAt,
+          data: {
+            discussionId: d._id,
+            title: d.title,
+            tags: d.tags,
+            likesCount: (d.likes || []).length,
+            dislikesCount: (d.dislikes || []).length,
+          },
+        })),
+        ...comments.map(c => ({
+          type: 'comment',
+          id: c._id,
+          createdAt: c.createdAt,
+          data: {
+            discussionId: c.discussionId,
+            content: c.content,
+            likesCount: (c.likes || []).length,
+            dislikesCount: (c.dislikes || []).length,
+          },
+        })),
+        ...likedDiscussions.map(d => ({
+          type: 'like_discussion',
+          id: d._id,
+          createdAt: d.createdAt,
+          data: {
+            discussionId: d._id,
+            title: d.title,
+            tags: d.tags,
+            likesCount: (d.likes || []).length,
+            dislikesCount: (d.dislikes || []).length,
+          },
+        })),
+        ...dislikedDiscussions.map(d => ({
+          type: 'dislike_discussion',
+          id: d._id,
+          createdAt: d.createdAt,
+          data: {
+            discussionId: d._id,
+            title: d.title,
+            tags: d.tags,
+            likesCount: (d.likes || []).length,
+            dislikesCount: (d.dislikes || []).length,
+          },
+        })),
+        ...likedComments.map(c => ({
+          type: 'like_comment',
+          id: c._id,
+          createdAt: c.createdAt,
+          data: {
+            discussionId: c.discussionId,
+            content: c.content,
+            likesCount: (c.likes || []).length,
+            dislikesCount: (c.dislikes || []).length,
+          },
+        })),
+        ...dislikedComments.map(c => ({
+          type: 'dislike_comment',
+          id: c._id,
+          createdAt: c.createdAt,
+          data: {
+            discussionId: c.discussionId,
+            content: c.content,
+            likesCount: (c.likes || []).length,
+            dislikesCount: (c.dislikes || []).length,
+          },
+        })),
+      ]
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, lim);
+
+      const nextCursor = items.length ? items[items.length - 1].createdAt : null;
+
+      return res.status(200).json({ items, nextCursor, total: items.length });
     } catch (error) {
       next(error);
     }
