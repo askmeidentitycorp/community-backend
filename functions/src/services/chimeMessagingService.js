@@ -450,7 +450,8 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
       createdTimestamp: m.CreatedTimestamp,
       lastEditedTimestamp: m.LastEditedTimestamp,
       sender: m.Sender,
-      type: m.Type
+      type: m.Type,
+      metadata: m.Metadata
     }))
     return { items, nextToken: res.NextToken }
   } catch (err) {

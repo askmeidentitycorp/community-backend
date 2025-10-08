@@ -31,6 +31,10 @@ const MessageSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    metadata: {
+      type: Schema.Types.Mixed,
+      default: null,
+    },
   },
   { timestamps: true }
 );

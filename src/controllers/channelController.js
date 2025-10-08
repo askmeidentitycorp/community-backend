@@ -161,7 +161,7 @@ export const sendMessage = async (req, res, next) => {
 export const mirrorMessage = async (req, res, next) => {
   try {
     const { channelId } = req.params
-    const { messageId, content, createdTimestamp } = req.body || {}
+    const { messageId, content, createdTimestamp, metadata } = req.body || {}
     if (!messageId) return next(new AppError('messageId is required', 400, 'VALIDATION_ERROR'))
     if (!content || !content.trim()) return next(new AppError('content is required', 400, 'VALIDATION_ERROR'))
     if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
@@ -186,6 +186,12 @@ export const mirrorMessage = async (req, res, next) => {
       isEdited: false,
       externalRef: { provider: 'chime', messageId, channelArn: channel.chime.channelArn }
     }
+    
+    // Add metadata if provided
+    if (metadata) {
+      doc.metadata = metadata
+    }
+    
     if (createdTimestamp) {
       const ts = new Date(createdTimestamp)
       if (!Number.isNaN(ts.getTime())) Object.assign(doc, { createdAt: ts, updatedAt: ts })

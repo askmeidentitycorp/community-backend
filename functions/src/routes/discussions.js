@@ -1,10 +1,10 @@
 import express from 'express';
 import Joi from 'joi';
-import multer from 'multer';
 import discussionController from '../controllers/discussionController.js';
 import { validatePlatformToken, tryValidatePlatformToken } from '../middleware/auth.js';
 import { requirePermission, ROLES } from '../middleware/rbac.js';
 import { validate } from '../middleware/validation.js';
+import { logger } from '../utils/logger.js';
 
 const router = express.Router({ mergeParams: true });
 
@@ -40,22 +40,64 @@ const updateSchema = Joi.object({
   isPinned: Joi.boolean(),
 }).min(1);
 
-// Multer setup for image upload (memory storage)
-const upload = multer({ storage: multer.memoryStorage() });
+// Middleware to handle file uploads using express-multipart-file-parser
+const handleFileUpload = (req, res, next) => {
+  // Log request details for debugging
+  logger.info('File upload request details', {
+    contentType: req.get('Content-Type'),
+    contentLength: req.get('Content-Length'),
+    hasFiles: !!(req.files && req.files.length > 0),
+    isMultipart: req.get('Content-Type')?.includes('multipart/form-data'),
+    bodyKeys: Object.keys(req.body || {}),
+    isFirebaseFunction: !!(process.env.FUNCTIONS_EMULATOR || process.env.GCLOUD_PROJECT)
+  });
+
+  // Check if files were uploaded
+  if (req.files && req.files.length > 0) {
+    const imageFile = req.files.find(file => file.fieldname === 'image');
+    if (imageFile) {
+      // Validate file type
+      if (!imageFile.mimetype.startsWith('image/')) {
+        return res.status(400).json({ error: { message: 'Only image files are allowed' } });
+      }
+      
+      // Validate file size (10MB limit)
+      if (imageFile.buffer.length > 10 * 1024 * 1024) {
+        return res.status(400).json({ error: { message: 'File too large. Maximum size is 10MB.' } });
+      }
+      
+      // Add file to request object in multer-compatible format
+      req.file = {
+        fieldname: imageFile.fieldname,
+        originalname: imageFile.filename,
+        encoding: imageFile.encoding,
+        mimetype: imageFile.mimetype,
+        buffer: imageFile.buffer,
+        size: imageFile.buffer.length
+      };
+      
+      logger.info('File processed successfully', {
+        filename: imageFile.filename,
+        mimetype: imageFile.mimetype,
+        size: imageFile.buffer.length
+      });
+    }
+  }
+  
+  next();
+};
 
 // Middleware to preprocess FormData for validation
 const preprocessFormData = (req, res, next) => {
-  if (req.file) {
-    // Convert FormData fields to proper format
-    if (req.body.tags && !Array.isArray(req.body.tags)) {
-      req.body.tags = [req.body.tags];
-    }
-    if (req.body.author && typeof req.body.author === 'string') {
-      try {
-        req.body.author = JSON.parse(req.body.author);
-      } catch (e) {
-        req.body.author = undefined;
-      }
+  // Convert FormData fields to proper format
+  if (req.body.tags && !Array.isArray(req.body.tags)) {
+    req.body.tags = [req.body.tags];
+  }
+  if (req.body.author && typeof req.body.author === 'string') {
+    try {
+      req.body.author = JSON.parse(req.body.author);
+    } catch (e) {
+      req.body.author = undefined;
     }
   }
   next();
@@ -66,7 +108,7 @@ router.post(
   '/discussions',
   validatePlatformToken,
   requirePermission('create_discussion'),
-  upload.single('image'),
+  handleFileUpload,
   preprocessFormData,
   validate(createSchema),
   discussionController.createDiscussion
