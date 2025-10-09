@@ -176,6 +176,24 @@ class UserController {
     }
   }
 
+  async getUserAvatar(req, res, next) {
+    try {
+      const { userId } = req.params;
+      if (!userId) {
+        throw new AppError('User ID is required', 400, 'BAD_REQUEST');
+      }
+      const user = await User.findById(userId).select('+avatarBinary +avatarContentType');
+      if (!user || !user.avatarBinary || !user.avatarContentType) {
+        return res.status(404).send();
+      }
+      res.setHeader('Content-Type', user.avatarContentType);
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+      return res.status(200).send(user.avatarBinary);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getUserActivity(req, res, next) {
     try {
       const { userId } = req.params;
@@ -291,6 +309,38 @@ class UserController {
         status: user.status,
         updatedAt: user.updatedAt,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async uploadAvatar(req, res, next) {
+    try {
+      if (!req.auth) {
+        throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+      }
+      const userId = req.auth.userId;
+      const { dataUrl } = req.body;
+      const match = /^data:(.+);base64,(.*)$/.exec(dataUrl || '');
+      if (!match) {
+        throw new AppError('Invalid data URL', 400, 'BAD_REQUEST');
+      }
+      const contentType = match[1];
+      const base64 = match[2];
+      const buffer = Buffer.from(base64, 'base64');
+      if (buffer.length > 10 * 1024) {
+        throw new AppError('Avatar too large (>10KB) after compression', 413, 'PAYLOAD_TOO_LARGE');
+      }
+
+      const user = await User.findOne({ _id: userId });
+      if (!user) {
+        throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+      }
+      user.avatarBinary = buffer;
+      user.avatarContentType = contentType;
+      user.profilePicture = '';
+      await user.save();
+      return res.status(200).json({ success: true });
     } catch (error) {
       next(error);
     }
