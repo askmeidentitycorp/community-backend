@@ -3,7 +3,6 @@ import Message from '../models/Message.js'
 import User from '../models/User.js'
 import chimeMessagingService from '../services/chimeMessagingService.js'
 import { AppError } from '../utils/errorHandler.js'
-import Message from '../models/Message.js'
 
 export const createChannel = async (req, res, next) => {
   try {
