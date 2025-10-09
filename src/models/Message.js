@@ -35,6 +35,13 @@ const MessageSchema = new Schema(
       type: Schema.Types.Mixed,
       default: null,
     },
+    // Fixed reaction set stored as user arrays; counts = array lengths
+    reactions: {
+      like: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+      love: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+      laugh: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+      wow: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+    },
   },
   { timestamps: true }
 );

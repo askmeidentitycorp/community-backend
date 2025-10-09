@@ -1,5 +1,6 @@
 import Channel from '../models/Channel.js'
 import Message from '../models/Message.js'
+import mongoose from 'mongoose'
 import User from '../models/User.js'
 import chimeMessagingService from '../services/chimeMessagingService.js'
 import { AppError } from '../utils/errorHandler.js'
@@ -198,6 +199,11 @@ export const mirrorMessage = async (req, res, next) => {
     }
 
     const saved = await Message.create(doc)
+    try {
+      const dbName = mongoose?.connection?.db?.databaseName
+      const coll = Message?.collection?.collectionName
+      console.log('[Controller] mirrorMessage saved', { id: saved?._id, dbName, collection: coll })
+    } catch {}
     return res.status(201).json({ message: saved })
   } catch (err) {
     return next(err)
@@ -264,16 +270,161 @@ export const listChannels = async (req, res, next) => {
     const user = await User.findById(req.auth.userId)
     if (!user) return next(new AppError('User not found', 404, 'NOT_FOUND'))
     
-    // Get channels where user is a member
-    const channels = await Channel.find({ 
+    // Get channels where user is a member (includes private/public)
+    const memberChannels = await Channel.find({ 
       members: user._id,
       isArchived: { $ne: true }
-    }).populate('members', 'name email').sort({ createdAt: -1 })
-    
-    console.log('[Controller] listChannels success', { channelCount: channels.length })
-    return res.json({ channels })
+    }).populate('members', 'name email').lean()
+
+    // Get all public channels (discoverable), regardless of membership
+    const publicChannels = await Channel.find({ 
+      isPrivate: false,
+      isArchived: { $ne: true }
+    }).populate('members', 'name email').lean()
+
+    // Merge unique by _id, and annotate with isMember
+    const byId = new Map()
+    for (const ch of publicChannels) {
+      byId.set(String(ch._id), { ...ch, isMember: Array.isArray(ch.members) && ch.members.some(m => String(m._id) === String(user._id)) })
+    }
+    for (const ch of memberChannels) {
+      byId.set(String(ch._id), { ...ch, isMember: true })
+    }
+
+    // Create final list
+    let merged = Array.from(byId.values())
+
+    // Sort: general first, then by name
+    merged.sort((a, b) => {
+      if (a.isDefaultGeneral) return -1
+      if (b.isDefaultGeneral) return 1
+      return String(a.name || '').localeCompare(String(b.name || ''))
+    })
+
+    console.log('[Controller] listChannels success', { channelCount: merged.length })
+    return res.json({ channels: merged })
   } catch (err) {
     console.error('[Controller] listChannels error', { error: err.message, stack: err.stack })
+    return next(err)
+  }
+}
+
+// Reaction handlers
+const REACTION_TYPES = new Set(['like', 'love', 'laugh', 'wow'])
+
+export const reactToMessage = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const { messageId, type } = req.body || {}
+    if (!messageId || !type) return next(new AppError('messageId and type are required', 400, 'VALIDATION_ERROR'))
+    if (!REACTION_TYPES.has(type)) return next(new AppError('Invalid reaction type', 400, 'VALIDATION_ERROR'))
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+    const userId = req.auth.userId
+
+    // Find local message by chime ref
+    const msg = await Message.findOne({ 'externalRef.provider': 'chime', 'externalRef.messageId': messageId, channelId })
+    if (!msg) return next(new AppError('Message not found', 404, 'NOT_FOUND'))
+
+    const field = `reactions.${type}`
+    await Message.updateOne({ _id: msg._id }, { $addToSet: { [field]: userId } })
+    const updated = await Message.findById(msg._id).lean()
+    const reactions = updated?.reactions || {}
+    const payload = {
+      reactions: {
+        like: (reactions.like || []).length,
+        love: (reactions.love || []).length,
+        laugh: (reactions.laugh || []).length,
+        wow: (reactions.wow || []).length,
+      },
+      myReactions: {
+        like: Array.isArray(reactions.like) && reactions.like.some(id => String(id) === String(userId)),
+        love: Array.isArray(reactions.love) && reactions.love.some(id => String(id) === String(userId)),
+        laugh: Array.isArray(reactions.laugh) && reactions.laugh.some(id => String(id) === String(userId)),
+        wow: Array.isArray(reactions.wow) && reactions.wow.some(id => String(id) === String(userId)),
+      }
+    }
+
+    // Broadcast via a lightweight STANDARD message with reaction metadata (non-persistent)
+    try {
+      const channel = await Channel.findById(channelId)
+      if (channel?.chime?.channelArn) {
+        const operator = await User.findById(req.auth.userId)
+        const operatorArn = await chimeMessagingService.ensureAppInstanceUser(operator)
+        const { ChimeSDKMessagingClient, SendChannelMessageCommand } = await import('@aws-sdk/client-chime-sdk-messaging')
+        const REGION = process.env.AWS_REGION
+        const client = new ChimeSDKMessagingClient({ region: REGION })
+        const meta = JSON.stringify({ reaction: { messageId, type, counts: payload.reactions } })
+        await client.send(new SendChannelMessageCommand({
+          ChannelArn: channel.chime.channelArn,
+          Content: 'REACTION',
+          Type: 'STANDARD',
+          Persistence: 'NON_PERSISTENT',
+          Metadata: meta,
+          ChimeBearer: operatorArn
+        }))
+      }
+    } catch {}
+
+    return res.json(payload)
+  } catch (err) {
+    return next(err)
+  }
+}
+
+export const unreactToMessage = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const { messageId, type } = req.body || {}
+    if (!messageId || !type) return next(new AppError('messageId and type are required', 400, 'VALIDATION_ERROR'))
+    if (!REACTION_TYPES.has(type)) return next(new AppError('Invalid reaction type', 400, 'VALIDATION_ERROR'))
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+    const userId = req.auth.userId
+
+    const msg = await Message.findOne({ 'externalRef.provider': 'chime', 'externalRef.messageId': messageId, channelId })
+    if (!msg) return next(new AppError('Message not found', 404, 'NOT_FOUND'))
+
+    const field = `reactions.${type}`
+    await Message.updateOne({ _id: msg._id }, { $pull: { [field]: userId } })
+    const updated = await Message.findById(msg._id).lean()
+    const reactions = updated?.reactions || {}
+    const payload = {
+      reactions: {
+        like: (reactions.like || []).length,
+        love: (reactions.love || []).length,
+        laugh: (reactions.laugh || []).length,
+        wow: (reactions.wow || []).length,
+      },
+      myReactions: {
+        like: Array.isArray(reactions.like) && reactions.like.some(id => String(id) === String(userId)),
+        love: Array.isArray(reactions.love) && reactions.love.some(id => String(id) === String(userId)),
+        laugh: Array.isArray(reactions.laugh) && reactions.laugh.some(id => String(id) === String(userId)),
+        wow: Array.isArray(reactions.wow) && reactions.wow.some(id => String(id) === String(userId)),
+      }
+    }
+
+    // Broadcast via a lightweight STANDARD message with reaction metadata (non-persistent)
+    try {
+      const channel = await Channel.findById(channelId)
+      if (channel?.chime?.channelArn) {
+        const operator = await User.findById(req.auth.userId)
+        const operatorArn = await chimeMessagingService.ensureAppInstanceUser(operator)
+        const { ChimeSDKMessagingClient, SendChannelMessageCommand } = await import('@aws-sdk/client-chime-sdk-messaging')
+        const REGION = process.env.AWS_REGION
+        const client = new ChimeSDKMessagingClient({ region: REGION })
+        const meta = JSON.stringify({ reaction: { messageId, type, counts: payload.reactions } })
+        await client.send(new SendChannelMessageCommand({
+          ChannelArn: channel.chime.channelArn,
+          Content: 'REACTION',
+          Type: 'STANDARD',
+          Persistence: 'NON_PERSISTENT',
+          Metadata: meta,
+          ChimeBearer: operatorArn
+        }))
+      }
+    } catch {}
+
+    return res.json(payload)
+  } catch (err) {
     return next(err)
   }
 }

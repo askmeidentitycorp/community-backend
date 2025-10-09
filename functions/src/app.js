@@ -48,7 +48,7 @@ connectDB().catch(err => {
 
 // CORS configuration
 const corsOptions = {
-  origin: ['http://localhost:5173', 'https://arythmatic-connect-ami.web.app', 'https://connect.askmeidentitty.com'],
+  origin: ['http://localhost:5173', 'https://arythmatic-connect-ami.web.app', 'https://connect.askmeidentity.com'],
   methods: ['GET', 'POST', 'OPTIONS', 'DELETE', 'PUT', 'PATCH'],
   allowedHeaders: ['Authorization', 'Content-Type'],
   credentials: true,

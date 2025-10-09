@@ -3,6 +3,7 @@ import Message from '../models/Message.js'
 import User from '../models/User.js'
 import chimeMessagingService from '../services/chimeMessagingService.js'
 import { AppError } from '../utils/errorHandler.js'
+import Message from '../models/Message.js'
 
 export const createChannel = async (req, res, next) => {
   try {
@@ -273,6 +274,80 @@ export const listChannels = async (req, res, next) => {
     return res.json({ channels })
   } catch (err) {
     console.error('[Controller] listChannels error', { error: err.message, stack: err.stack })
+    return next(err)
+  }
+}
+
+// Reaction handlers
+const REACTION_TYPES = new Set(['like', 'love', 'laugh', 'wow'])
+
+export const reactToMessage = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const { messageId, type } = req.body || {}
+    if (!messageId || !type) return next(new AppError('messageId and type are required', 400, 'VALIDATION_ERROR'))
+    if (!REACTION_TYPES.has(type)) return next(new AppError('Invalid reaction type', 400, 'VALIDATION_ERROR'))
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+    const userId = req.auth.userId
+
+    // Find local message by chime ref
+    const msg = await Message.findOne({ 'externalRef.provider': 'chime', 'externalRef.messageId': messageId, channelId })
+    if (!msg) return next(new AppError('Message not found', 404, 'NOT_FOUND'))
+
+    const field = `reactions.${type}`
+    await Message.updateOne({ _id: msg._id }, { $addToSet: { [field]: userId } })
+    const updated = await Message.findById(msg._id).lean()
+    const reactions = updated?.reactions || {}
+    return res.json({
+      reactions: {
+        like: (reactions.like || []).length,
+        love: (reactions.love || []).length,
+        laugh: (reactions.laugh || []).length,
+        wow: (reactions.wow || []).length,
+      },
+      myReactions: {
+        like: Array.isArray(reactions.like) && reactions.like.some(id => String(id) === String(userId)),
+        love: Array.isArray(reactions.love) && reactions.love.some(id => String(id) === String(userId)),
+        laugh: Array.isArray(reactions.laugh) && reactions.laugh.some(id => String(id) === String(userId)),
+        wow: Array.isArray(reactions.wow) && reactions.wow.some(id => String(id) === String(userId)),
+      }
+    })
+  } catch (err) {
+    return next(err)
+  }
+}
+
+export const unreactToMessage = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const { messageId, type } = req.body || {}
+    if (!messageId || !type) return next(new AppError('messageId and type are required', 400, 'VALIDATION_ERROR'))
+    if (!REACTION_TYPES.has(type)) return next(new AppError('Invalid reaction type', 400, 'VALIDATION_ERROR'))
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+    const userId = req.auth.userId
+
+    const msg = await Message.findOne({ 'externalRef.provider': 'chime', 'externalRef.messageId': messageId, channelId })
+    if (!msg) return next(new AppError('Message not found', 404, 'NOT_FOUND'))
+
+    const field = `reactions.${type}`
+    await Message.updateOne({ _id: msg._id }, { $pull: { [field]: userId } })
+    const updated = await Message.findById(msg._id).lean()
+    const reactions = updated?.reactions || {}
+    return res.json({
+      reactions: {
+        like: (reactions.like || []).length,
+        love: (reactions.love || []).length,
+        laugh: (reactions.laugh || []).length,
+        wow: (reactions.wow || []).length,
+      },
+      myReactions: {
+        like: Array.isArray(reactions.like) && reactions.like.some(id => String(id) === String(userId)),
+        love: Array.isArray(reactions.love) && reactions.love.some(id => String(id) === String(userId)),
+        laugh: Array.isArray(reactions.laugh) && reactions.laugh.some(id => String(id) === String(userId)),
+        wow: Array.isArray(reactions.wow) && reactions.wow.some(id => String(id) === String(userId)),
+      }
+    })
+  } catch (err) {
     return next(err)
   }
 }

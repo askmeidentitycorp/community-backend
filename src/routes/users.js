@@ -39,6 +39,10 @@ const updateSelfSchema = Joi.object({
   }),
 }).min(1);
 
+const uploadAvatarSchema = Joi.object({
+  dataUrl: Joi.string().pattern(/^data:[^;]+;base64,[A-Za-z0-9+/=]+$/).required(),
+});
+
 const updateUserSchema = Joi.object({
   name: Joi.string().min(1).max(120),
   title: Joi.string().max(100).allow(''),
@@ -97,6 +101,13 @@ router.get(
   userController.getUser
 );
 
+// Get user avatar (binary)
+router.get(
+  '/users/:userId/avatar',
+  validatePlatformToken,
+  userController.getUserAvatar
+);
+
 // Get current user (self)
 router.get(
   '/users/me',
@@ -118,6 +129,14 @@ router.put(
   validatePlatformToken,
   validate(updateSelfSchema),
   userController.updateSelf
+);
+
+// Upload/Update self avatar (expects small data URL, <=10KB after compression)
+router.put(
+  '/users/me/avatar',
+  validatePlatformToken,
+  validate(uploadAvatarSchema),
+  userController.uploadAvatar
 );
 
 // Update user (admin)

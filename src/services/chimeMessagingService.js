@@ -443,16 +443,83 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
       NextToken: nextToken
     }))
     logger.info('[Chime] Messages listed successfully', { messageCount: res.ChannelMessages?.length || 0, nextToken: res.NextToken })
-    
-    const items = (res.ChannelMessages || []).map(m => ({
-      messageId: m.MessageId,
-      content: m.Content,
-      createdTimestamp: m.CreatedTimestamp,
-      lastEditedTimestamp: m.LastEditedTimestamp,
-      sender: m.Sender,
-      type: m.Type,
-      metadata: m.Metadata
-    }))
+
+    const chimeMessages = res.ChannelMessages || []
+
+    // Build list of messageIds and fetch reactions in one query
+    const messageIds = chimeMessages.map(m => m.MessageId).filter(Boolean)
+
+    // Prime local store for missing messages using bulkWrite (avoid N+1 awaits)
+    try {
+      if (messageIds.length > 0) {
+        const existingDocs = await Message.find({ 'externalRef.provider': 'chime', 'externalRef.messageId': { $in: messageIds } }, { 'externalRef.messageId': 1 }).lean()
+        const existingSet = new Set((existingDocs || []).map(d => d.externalRef?.messageId))
+        const ops = []
+        for (const m of chimeMessages) {
+          if (!existingSet.has(m.MessageId)) {
+            ops.push({
+              insertOne: {
+                document: {
+                  channelId: channel._id,
+                  authorId: user._id,
+                  content: m.Content || '',
+                  isEdited: !!m.LastEditedTimestamp,
+                  metadata: m.Metadata || null,
+                  externalRef: { provider: 'chime', messageId: m.MessageId, channelArn: channel.chime.channelArn },
+                  ...(m.CreatedTimestamp ? { createdAt: new Date(m.CreatedTimestamp) } : {}),
+                  ...(m.LastEditedTimestamp ? { updatedAt: new Date(m.LastEditedTimestamp) } : {}),
+                }
+              }
+            })
+          }
+        }
+        if (ops.length > 0) {
+          await Message.bulkWrite(ops, { ordered: false })
+        }
+      }
+    } catch {}
+
+    // Load all reactions for these messages at once
+    let reactionsDocs = []
+    try {
+      reactionsDocs = await Message.find(
+        { 'externalRef.provider': 'chime', 'externalRef.messageId': { $in: messageIds } },
+        { 'externalRef.messageId': 1, reactions: 1 }
+      ).lean()
+    } catch {}
+    const idToReactions = new Map()
+    for (const d of reactionsDocs || []) {
+      idToReactions.set(d.externalRef?.messageId, d.reactions || {})
+    }
+
+    const uid = String(user._id)
+    const items = chimeMessages.map(m => {
+      const r = idToReactions.get(m.MessageId) || {}
+      const counts = {
+        like: (r.like || []).length,
+        love: (r.love || []).length,
+        laugh: (r.laugh || []).length,
+        wow: (r.wow || []).length,
+      }
+      const mine = {
+        like: Array.isArray(r.like) && r.like.some(id => String(id) === uid),
+        love: Array.isArray(r.love) && r.love.some(id => String(id) === uid),
+        laugh: Array.isArray(r.laugh) && r.laugh.some(id => String(id) === uid),
+        wow: Array.isArray(r.wow) && r.wow.some(id => String(id) === uid),
+      }
+      return {
+        messageId: m.MessageId,
+        content: m.Content,
+        createdTimestamp: m.CreatedTimestamp,
+        lastEditedTimestamp: m.LastEditedTimestamp,
+        sender: m.Sender,
+        type: m.Type,
+        metadata: m.Metadata,
+        reactions: counts,
+        myReactions: mine,
+      }
+    })
+
     return { items, nextToken: res.NextToken }
   } catch (err) {
     logger.error('[Chime] Error listing messages', { error: err.message, channelArn: channel.chime.channelArn })

@@ -1,7 +1,7 @@
 import express from 'express'
 import { validatePlatformToken } from '../middleware/auth.js'
 import { requireRole, ROLES } from '../middleware/rbac.js'
-import { createChannel, addMember, removeMember, listMessages, sendMessage, getChannel, ensureGeneralAndJoin, listChannels, mirrorMessage } from '../controllers/channelController.js'
+import { createChannel, addMember, removeMember, listMessages, sendMessage, getChannel, ensureGeneralAndJoin, listChannels, mirrorMessage, reactToMessage, unreactToMessage } from '../controllers/channelController.js'
 
 const router = express.Router()
 
@@ -22,6 +22,8 @@ router.post('/channels/general/ensure', validatePlatformToken, ensureGeneralAndJ
 router.get('/channels/:channelId/messages', validatePlatformToken, listMessages)
 router.post('/channels/:channelId/messages', validatePlatformToken, sendMessage)
 router.post('/channels/:channelId/messages/mirror', validatePlatformToken, mirrorMessage)
+router.post('/channels/:channelId/messages/react', validatePlatformToken, reactToMessage)
+router.post('/channels/:channelId/messages/unreact', validatePlatformToken, unreactToMessage)
 
 export default router
 
