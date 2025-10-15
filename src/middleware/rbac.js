@@ -1,6 +1,7 @@
 import { AppError } from '../utils/errorHandler.js';
 import User from '../models/User.js';
 import { logger } from '../utils/logger.js';
+import ChannelRoleAssignment from '../models/ChannelRoleAssignment.js';
 
 // Role definitions
 export const ROLES = {
@@ -101,4 +102,25 @@ export const requireSuperAdminOrBootstrap = async (req, res, next) => {
   } catch (e) {
     return next(new AppError('Authorization check failed', 500, 'AUTHZ_ERROR'));
   }
+};
+
+/**
+ * Require channel moderator role for the channel in params, or super_admin.
+ * channelIdParamName allows reuse for nested routes.
+ */
+export const requireChannelModerator = (channelIdParamName = 'channelId') => {
+  return async (req, res, next) => {
+    try {
+      if (!req.auth) return next(new AppError('Authentication required', 401, 'UNAUTHORIZED'));
+      const { roles = [], userId } = req.auth;
+      if (roles.includes(ROLES.SUPER_ADMIN)) return next();
+      const channelId = req.params?.[channelIdParamName];
+      if (!channelId) return next(new AppError('channelId missing in route', 400, 'VALIDATION_ERROR'));
+      const exists = await ChannelRoleAssignment.exists({ channelId, userId, role: 'moderator' });
+      if (exists) return next();
+      return next(new AppError('Insufficient permissions', 403, 'FORBIDDEN'));
+    } catch (e) {
+      return next(new AppError('Authorization check failed', 500, 'AUTHZ_ERROR'));
+    }
+  };
 };

@@ -28,8 +28,12 @@ const upsertUserSchema = Joi.object({
 
 const updateSelfSchema = Joi.object({
   name: Joi.string().min(1).max(120),
+  title: Joi.string().max(100).allow(''),
+  department: Joi.string().max(100).allow(''),
   profile: Joi.object().keys({
     bio: Joi.string().max(2000).allow(''),
+    location: Joi.string().max(120).allow(''),
+    coverImage: Joi.string().uri().allow(''),
     skills: Joi.array().items(Joi.string()).max(50),
     socialLinks: Joi.object().pattern(/.*/, Joi.string().uri()),
   }),

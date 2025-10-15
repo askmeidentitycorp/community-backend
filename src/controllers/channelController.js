@@ -4,6 +4,7 @@ import mongoose from 'mongoose'
 import User from '../models/User.js'
 import chimeMessagingService from '../services/chimeMessagingService.js'
 import { AppError } from '../utils/errorHandler.js'
+import ChannelRoleAssignment from '../models/ChannelRoleAssignment.js'
 
 export const createChannel = async (req, res, next) => {
   try {
@@ -69,6 +70,54 @@ export const removeMember = async (req, res, next) => {
     await Channel.updateOne({ _id: channelId }, { $pull: { members: user._id, admins: user._id } })
     const updated = await Channel.findById(channelId)
     return res.json({ channel: updated })
+  } catch (err) {
+    return next(err)
+  }
+}
+
+export const listChannelModerators = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const assignments = await ChannelRoleAssignment.find({ channelId, role: 'moderator' }).lean()
+    const userIds = assignments.map(a => a.userId)
+    const users = await User.find({ _id: { $in: userIds } }, 'name email').lean()
+    return res.json({ moderators: users })
+  } catch (err) {
+    return next(err)
+  }
+}
+
+export const grantChannelModerator = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const { userId } = req.body || {}
+    if (!userId) return next(new AppError('userId is required', 400, 'VALIDATION_ERROR'))
+    const user = await User.findById(userId)
+    if (!user) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+    const channel = await Channel.findById(channelId)
+    if (!channel) return next(new AppError('Channel not found', 404, 'NOT_FOUND'))
+    const doc = await ChannelRoleAssignment.findOneAndUpdate(
+      { channelId, userId, role: 'moderator' },
+      { $setOnInsert: { createdBy: req.auth?.userId } },
+      { new: true, upsert: true }
+    )
+    // Ensure membership
+    const isMember = channel.members.some(id => String(id) === String(user._id))
+    if (!isMember) {
+      await chimeMessagingService.addMember({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined })
+    }
+    return res.status(201).json({ success: true, assignment: { channelId, userId, role: 'moderator' } })
+  } catch (err) {
+    return next(err)
+  }
+}
+
+export const revokeChannelModerator = async (req, res, next) => {
+  try {
+    const { channelId, userId } = req.params
+    const deleted = await ChannelRoleAssignment.findOneAndDelete({ channelId, userId, role: 'moderator' })
+    if (!deleted) return next(new AppError('Moderator assignment not found', 404, 'NOT_FOUND'))
+    return res.json({ success: true })
   } catch (err) {
     return next(err)
   }

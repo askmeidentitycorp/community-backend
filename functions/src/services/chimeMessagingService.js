@@ -446,8 +446,10 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
 
     const chimeMessages = res.ChannelMessages || []
 
+    // Build list of messageIds and fetch reactions in one query
     const messageIds = chimeMessages.map(m => m.MessageId).filter(Boolean)
 
+    // Prime local store for missing messages using bulkWrite (avoid N+1 awaits)
     try {
       if (messageIds.length > 0) {
         const existingDocs = await Message.find({ 'externalRef.provider': 'chime', 'externalRef.messageId': { $in: messageIds } }, { 'externalRef.messageId': 1 }).lean()
@@ -477,6 +479,7 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
       }
     } catch {}
 
+    // Load all reactions for these messages at once
     let reactionsDocs = []
     try {
       reactionsDocs = await Message.find(
