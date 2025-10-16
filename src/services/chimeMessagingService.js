@@ -1,4 +1,4 @@
-import { ChimeSDKMessagingClient, CreateChannelCommand, CreateChannelMembershipCommand, ListChannelMessagesCommand, SendChannelMessageCommand, DescribeChannelCommand, ListChannelsCommand, ListChannelMembershipsCommand, CreateChannelModeratorCommand, DeleteChannelMembershipCommand } from '@aws-sdk/client-chime-sdk-messaging'
+import { ChimeSDKMessagingClient, CreateChannelCommand, CreateChannelMembershipCommand, ListChannelMessagesCommand, SendChannelMessageCommand, DescribeChannelCommand, ListChannelsCommand, ListChannelMembershipsCommand, CreateChannelModeratorCommand, DeleteChannelMembershipCommand, DeleteChannelCommand, DeleteChannelMessageCommand } from '@aws-sdk/client-chime-sdk-messaging'
 import { ChimeSDKIdentityClient, CreateAppInstanceUserCommand, DescribeAppInstanceUserCommand } from '@aws-sdk/client-chime-sdk-identity'
 import Channel from '../models/Channel.js'
 import Message from '../models/Message.js'
@@ -30,8 +30,16 @@ stsClient.send(new GetCallerIdentityCommand({})).then(identity => {
   console.log('[Chime] Failed to get AWS identity:', err.message)
 })
 
-const identityClient = new ChimeSDKIdentityClient({ region: REGION })
-const messagingClient = new ChimeSDKMessagingClient({ region: REGION })
+// Admin clients (use backend IAM role with full permissions)
+const adminIdentityClient = new ChimeSDKIdentityClient({ region: REGION })
+const adminMessagingClient = new ChimeSDKMessagingClient({ region: REGION })
+
+// User client (for operations that should use user's ChimeBearer)
+const userMessagingClient = new ChimeSDKMessagingClient({ region: REGION })
+
+// Legacy clients for backward compatibility (will be deprecated)
+const identityClient = adminIdentityClient
+const messagingClient = adminMessagingClient
 
 function toAppInstanceUserId(userId) {
   return String(userId)
@@ -45,7 +53,7 @@ async function ensureAppInstanceUser(user) {
   logger.info('[Chime] AppInstanceUser ARN', { appInstanceUserArn })
   
   try {
-    await identityClient.send(new DescribeAppInstanceUserCommand({ AppInstanceUserArn: appInstanceUserArn }))
+    await adminIdentityClient.send(new DescribeAppInstanceUserCommand({ AppInstanceUserArn: appInstanceUserArn }))
     logger.info('[Chime] AppInstanceUser already exists', { appInstanceUserArn })
     return appInstanceUserArn
   } catch (err) {
@@ -55,7 +63,7 @@ async function ensureAppInstanceUser(user) {
       throw err
     }
     logger.info('[Chime] Creating new AppInstanceUser', { appInstanceUserArn, errorName: err?.name })
-    await identityClient.send(new CreateAppInstanceUserCommand({
+    await adminIdentityClient.send(new CreateAppInstanceUserCommand({
       AppInstanceArn: APP_INSTANCE_ARN,
       AppInstanceUserId: appInstanceUserId,
       Name: user.name || user.email || appInstanceUserId
@@ -81,7 +89,7 @@ async function checkChannelExistsInChime({ name, isDefaultGeneral = false, user 
       ChimeBearer: userArn
     })
     
-    const response = await messagingClient.send(listChannelsCommand)
+    const response = await adminMessagingClient.send(listChannelsCommand)
     const channels = response.Channels || []
     
     // Look for a channel with the same name
@@ -110,7 +118,7 @@ async function getChannelMembersFromChime({ channelArn, userArn }) {
   logger.info('[Chime] getChannelMembersFromChime start', { channelArn })
   
   try {
-    const response = await messagingClient.send(new ListChannelMembershipsCommand({
+    const response = await adminMessagingClient.send(new ListChannelMembershipsCommand({
       ChannelArn: channelArn,
       ChimeBearer: userArn,
       MaxResults: 50
@@ -260,7 +268,7 @@ async function createChannel({ name, description, isPrivate, createdByUser, isDe
   const privacy = isPrivate ? 'PRIVATE' : 'PUBLIC'
   logger.info('[Chime] Creating new Chime channel', { name, privacy, creatorArn })
   
-  const res = await messagingClient.send(new CreateChannelCommand({
+  const res = await adminMessagingClient.send(new CreateChannelCommand({
     AppInstanceArn: APP_INSTANCE_ARN,
     Name: name,
     Mode: 'RESTRICTED',
@@ -284,7 +292,7 @@ async function createChannel({ name, description, isPrivate, createdByUser, isDe
   })
   logger.info('[Chime] Channel saved to MongoDB', { channelId: channel._id })
   
-  await messagingClient.send(new CreateChannelMembershipCommand({
+  await adminMessagingClient.send(new CreateChannelMembershipCommand({
     ChannelArn: channelArn,
     MemberArn: creatorArn,
     Type: 'DEFAULT',
@@ -294,7 +302,7 @@ async function createChannel({ name, description, isPrivate, createdByUser, isDe
   
   // Promote creator to channel moderator in Chime
   try {
-    await messagingClient.send(new CreateChannelModeratorCommand({
+    await adminMessagingClient.send(new CreateChannelModeratorCommand({
       ChannelArn: channelArn,
       ChannelModeratorArn: creatorArn,
       ChimeBearer: creatorArn
@@ -320,7 +328,7 @@ async function addMember({ channelId, user, operatorUser }) {
   logger.info('[Chime] Adding member to Chime channel', { channelArn: channel.chime.channelArn, memberArn, operatorArn })
   logger.info('[Chime] Using ChimeBearer for addMember', { chimeBearer: operatorArn })
   
-  await messagingClient.send(new CreateChannelMembershipCommand({
+  await adminMessagingClient.send(new CreateChannelMembershipCommand({
     ChannelArn: channel.chime.channelArn,
     MemberArn: memberArn,
     Type: 'DEFAULT',
@@ -358,7 +366,7 @@ async function ensureChimeMembership({ channelId, user }) {
   logger.info('[Chime] Ensuring Chime membership', { channelArn: channel.chime.channelArn, userArn })
   
   try {
-    await messagingClient.send(new CreateChannelMembershipCommand({
+    await adminMessagingClient.send(new CreateChannelMembershipCommand({
       ChannelArn: channel.chime.channelArn,
       MemberArn: userArn,
       Type: 'DEFAULT',
@@ -391,7 +399,7 @@ async function sendMessage({ channelId, author, content }) {
   await new Promise(resolve => setTimeout(resolve, 1000))
   logger.info('[Chime] Membership propagation delay completed')
   
-  const res = await messagingClient.send(new SendChannelMessageCommand({
+  const res = await adminMessagingClient.send(new SendChannelMessageCommand({
     ChannelArn: channel.chime.channelArn,
     Content: content,
     Type: 'STANDARD',
@@ -423,7 +431,7 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
   
   // Backend-side listing for now; alternatively the frontend can list directly using Cognito credentials
   try {
-    const describe = await messagingClient.send(new DescribeChannelCommand({ 
+    const describe = await adminMessagingClient.send(new DescribeChannelCommand({ 
       ChannelArn: channel.chime.channelArn, 
       ChimeBearer: appInstanceUserArn 
     }))
@@ -436,7 +444,7 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
   }
   
   try {
-    const res = await messagingClient.send(new ListChannelMessagesCommand({
+    const res = await adminMessagingClient.send(new ListChannelMessagesCommand({
       ChannelArn: channel.chime.channelArn,
       ChimeBearer: appInstanceUserArn,
       MaxResults: pageSize,
@@ -537,7 +545,55 @@ export default {
   addMember,
   ensureChimeMembership,
   sendMessage,
-  listMessages
+  listMessages,
+  async deleteChannel({ channelId, operatorUser }) {
+    const channel = await Channel.findById(channelId)
+    if (!channel || !channel?.chime?.channelArn) throw new Error('Channel not found or not mapped to Chime')
+    const operatorArn = await ensureAppInstanceUser(operatorUser)
+    await adminMessagingClient.send(new DeleteChannelCommand({
+      ChannelArn: channel.chime.channelArn,
+      ChimeBearer: operatorArn
+    }))
+    await Channel.deleteOne({ _id: channelId })
+    await Message.deleteMany({ channelId })
+    return { deleted: true }
+  },
+  async deleteChannelMessage({ channelId, messageId, operatorUser }) {
+    const channel = await Channel.findById(channelId)
+    if (!channel || !channel?.chime?.channelArn) throw new Error('Channel not found or not mapped to Chime')
+    const operatorArn = await ensureAppInstanceUser(operatorUser)
+    await adminMessagingClient.send(new DeleteChannelMessageCommand({
+      ChannelArn: channel.chime.channelArn,
+      MessageId: messageId,
+      ChimeBearer: operatorArn
+    }))
+    await Message.deleteOne({ channelId, 'externalRef.provider': 'chime', 'externalRef.messageId': messageId })
+    return { deleted: true }
+  },
+  async grantChannelModerator({ channelId, user, operatorUser }) {
+    const channel = await Channel.findById(channelId)
+    if (!channel || !channel?.chime?.channelArn) throw new Error('Channel not found or not mapped to Chime')
+    const memberArn = await ensureAppInstanceUser(user)
+    const operatorArn = await ensureAppInstanceUser(operatorUser || user)
+    await adminMessagingClient.send(new CreateChannelModeratorCommand({
+      ChannelArn: channel.chime.channelArn,
+      ChannelModeratorArn: memberArn,
+      ChimeBearer: operatorArn
+    }))
+    return { success: true }
+  },
+  async revokeChannelModerator({ channelId, user, operatorUser }) {
+    const channel = await Channel.findById(channelId)
+    if (!channel || !channel?.chime?.channelArn) throw new Error('Channel not found or not mapped to Chime')
+    const memberArn = await ensureAppInstanceUser(user)
+    const operatorArn = await ensureAppInstanceUser(operatorUser || user)
+    await adminMessagingClient.send(new DeleteChannelModeratorCommand({
+      ChannelArn: channel.chime.channelArn,
+      ChannelModeratorArn: memberArn,
+      ChimeBearer: operatorArn
+    }))
+    return { success: true }
+  }
 }
 
 

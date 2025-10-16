@@ -48,7 +48,7 @@ connectDB().catch(err => {
 
 // CORS configuration
 const corsOptions = {
-  origin: ['http://localhost:5173', 'https://connect.askmeidentitty.com'],
+  origin: ['http://localhost:5173', 'https://arythmatic-connect-ami.web.app', 'https://connect.askmeidentity.com'],
   methods: ['GET', 'POST', 'OPTIONS', 'DELETE', 'PUT', 'PATCH'],
   allowedHeaders: ['Authorization', 'Content-Type'],
   credentials: true,
@@ -75,13 +75,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(morgan('combined', { stream: { write: (message) => logger.info(message.trim()) } }));
 
 // Rate limiting
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-app.use('/api/', limiter);
+// if (process.env.NODE_ENV !== 'development') {
+//   const limiter = rateLimit({
+//     windowMs: 15 * 60 * 1000, // 15 minutes
+//     max: 100, // limit each IP to 100 requests per windowMs
+//     standardHeaders: true,
+//     legacyHeaders: false,
+//   });
+//   app.use('/api/', limiter);
+// }
 
 // Routes
 app.use('/api/v1', routes);
@@ -95,8 +97,7 @@ app.get('/health', (req, res) => {
 app.use(errorHandler);
 
 // Start server only when not running as Firebase Function
-const PORT = process.env.PORT || 8080;
-
+const PORT = process.env.PORT || 3000;
 // Only start the server if not running as a Firebase Function
 if (!process.env.FUNCTIONS_EMULATOR && !process.env.GCLOUD_PROJECT) {
   app.listen(PORT, () => {

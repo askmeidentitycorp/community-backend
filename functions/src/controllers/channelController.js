@@ -106,6 +106,10 @@ export const grantChannelModerator = async (req, res, next) => {
     if (!isMember) {
       await chimeMessagingService.addMember({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined })
     }
+    // Also grant moderator in Chime
+    try {
+      await chimeMessagingService.grantChannelModerator({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined })
+    } catch {}
     return res.status(201).json({ success: true, assignment: { channelId, userId, role: 'moderator' } })
   } catch (err) {
     return next(err)
@@ -117,6 +121,13 @@ export const revokeChannelModerator = async (req, res, next) => {
     const { channelId, userId } = req.params
     const deleted = await ChannelRoleAssignment.findOneAndDelete({ channelId, userId, role: 'moderator' })
     if (!deleted) return next(new AppError('Moderator assignment not found', 404, 'NOT_FOUND'))
+    // Also revoke moderator in Chime
+    try {
+      const user = await User.findById(userId)
+      if (user) {
+        await chimeMessagingService.revokeChannelModerator({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined })
+      }
+    } catch {}
     return res.json({ success: true })
   } catch (err) {
     return next(err)
@@ -202,6 +213,34 @@ export const sendMessage = async (req, res, next) => {
     if (!author) return next(new AppError('User not found', 404, 'NOT_FOUND'))
     const result = await chimeMessagingService.sendMessage({ channelId, author, content })
     return res.status(201).json(result)
+  } catch (err) {
+    return next(err)
+  }
+}
+
+export const deleteChannel = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+    const operator = await User.findById(req.auth.userId)
+    if (!operator) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+    const result = await chimeMessagingService.deleteChannel({ channelId, operatorUser: operator })
+    return res.json(result)
+  } catch (err) {
+    return next(err)
+  }
+}
+
+export const deleteChannelMessage = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const { messageId } = req.body || {}
+    if (!messageId) return next(new AppError('messageId is required', 400, 'VALIDATION_ERROR'))
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+    const operator = await User.findById(req.auth.userId)
+    if (!operator) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+    const result = await chimeMessagingService.deleteChannelMessage({ channelId, messageId, operatorUser: operator })
+    return res.json(result)
   } catch (err) {
     return next(err)
   }
