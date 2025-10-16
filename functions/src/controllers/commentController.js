@@ -163,6 +163,62 @@ class CommentController {
     }
   }
 
+  async updateComment(req, res, next) {
+    try {
+      if (!req.auth) {
+        throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+      }
+
+      const { discussionId, commentId } = req.params;
+      const { content } = req.body;
+
+      const comment = await Comment.findOne({ _id: commentId, discussionId });
+      if (!comment) {
+        throw new AppError('Comment not found', 404, 'NOT_FOUND');
+      }
+
+      const roles = req.auth.roles || [];
+      const permissions = req.auth.permissions || [];
+      const isElevated = roles.includes('super_admin') || roles.includes('moderator') || permissions.includes('manage_discussions');
+      const isOwner = String(comment.authorId) === String(req.auth.userId);
+
+      if (!isElevated && !isOwner) {
+        return next(new AppError('Insufficient permissions', 403, 'FORBIDDEN'));
+      }
+
+      if (req.file && req.file.buffer) {
+        const imageUrl = await uploadBufferToS3(req.file.buffer, {
+          contentType: req.file.mimetype,
+          originalName: req.file.originalname,
+          prefix: 'comments/images/'
+        });
+        comment.imageUrl = imageUrl || comment.imageUrl;
+      }
+
+      if (typeof content === 'string' && content.trim().length > 0) {
+        comment.content = content;
+      }
+      comment.isEdited = true;
+
+      await comment.save();
+      logger.info('Comment updated', { id: comment._id.toString(), discussionId });
+      return res.status(200).json({
+        comment: {
+          id: comment._id,
+          discussionId: comment.discussionId,
+          parentId: comment.parentId,
+          authorId: comment.authorId,
+          content: comment.content,
+          imageUrl: comment.imageUrl || '',
+          isEdited: !!comment.isEdited,
+          updatedAt: comment.updatedAt,
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async likeComment(req, res, next) {
     try {
       if (!req.auth) {

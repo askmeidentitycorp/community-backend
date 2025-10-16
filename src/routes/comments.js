@@ -47,6 +47,15 @@ router.delete(
   commentController.deleteComment
 );
 
+// Update comment (auth; author or elevated)
+router.put(
+  '/discussions/:discussionId/comments/:commentId',
+  validatePlatformToken,
+  // optional image replacement via multipart form handled in controller if wired in via gateway
+  validate(Joi.object({ content: Joi.string().min(1).required() })),
+  commentController.updateComment
+);
+
 // Likes/Dislikes for comments
 router.post(
   '/discussions/:discussionId/comments/:commentId/like',
