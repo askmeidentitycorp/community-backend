@@ -1,6 +1,6 @@
 import express from 'express'
 import { validatePlatformToken } from '../middleware/auth.js'
-import { requireRole, ROLES, requireChannelModerator } from '../middleware/rbac.js'
+import { requireRole, ROLES, requireChannelModerator, requireChannelModeratorOrPublicJoin } from '../middleware/rbac.js'
 import { createChannel, addMember, removeMember, listMessages, sendMessage, getChannel, ensureGeneralAndJoin, listChannels, mirrorMessage, reactToMessage, unreactToMessage, grantChannelModerator, revokeChannelModerator, listChannelModerators, deleteChannel, deleteChannelMessage } from '../controllers/channelController.js'
 
 const router = express.Router()
@@ -15,7 +15,7 @@ router.get('/channels', validatePlatformToken, listChannels)
 router.post('/channels', validatePlatformToken, requireRole([ROLES.SUPER_ADMIN]), createChannel)
 router.get('/channels/:channelId', validatePlatformToken, getChannel)
 router.delete('/channels/:channelId', validatePlatformToken, requireRole([ROLES.SUPER_ADMIN]), deleteChannel)
-router.post('/channels/:channelId/members', validatePlatformToken, requireChannelModerator('channelId'), addMember)
+router.post('/channels/:channelId/members', validatePlatformToken, requireChannelModeratorOrPublicJoin('channelId'), addMember)
 router.delete('/channels/:channelId/members', validatePlatformToken, requireChannelModerator('channelId'), removeMember)
 router.post('/channels/general/ensure', validatePlatformToken, ensureGeneralAndJoin)
 

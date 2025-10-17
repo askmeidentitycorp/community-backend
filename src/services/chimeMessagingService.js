@@ -328,13 +328,29 @@ async function addMember({ channelId, user, operatorUser }) {
   logger.info('[Chime] Adding member to Chime channel', { channelArn: channel.chime.channelArn, memberArn, operatorArn })
   logger.info('[Chime] Using ChimeBearer for addMember', { chimeBearer: operatorArn })
   
-  await adminMessagingClient.send(new CreateChannelMembershipCommand({
-    ChannelArn: channel.chime.channelArn,
-    MemberArn: memberArn,
-    Type: 'DEFAULT',
-    ChimeBearer: operatorArn
-  }))
-  logger.info('[Chime] Member added to Chime channel successfully')
+  try {
+    await adminMessagingClient.send(new CreateChannelMembershipCommand({
+      ChannelArn: channel.chime.channelArn,
+      MemberArn: memberArn,
+      Type: 'DEFAULT',
+      ChimeBearer: operatorArn
+    }))
+    logger.info('[Chime] Member added to Chime channel successfully')
+  } catch (error) {
+    // Handle AWS Chime specific errors gracefully
+    if (error.name === 'ConflictException' || error.message?.includes('already a member')) {
+      logger.info('[Chime] User already a member of Chime channel', { channelId, userId: user._id, error: error.message })
+    } else if (error.name === 'ForbiddenException' || error.message?.includes('not authorized')) {
+      logger.error('[Chime] User not authorized to add members to this channel', { channelId, userId: user._id, error: error.message })
+      throw new Error('Not authorized to add members to this channel')
+    } else if (error.name === 'NotFoundException') {
+      logger.error('[Chime] Channel or user not found in Chime', { channelId, userId: user._id, error: error.message })
+      throw new Error('Channel or user not found')
+    } else {
+      logger.error('[Chime] Unexpected error adding member to Chime channel', { channelId, userId: user._id, error: error.message, errorName: error.name })
+      throw new Error(`Failed to add member to channel: ${error.message}`)
+    }
+  }
   
   // Use atomic update to prevent race conditions and duplicates
   const updateResult = await Channel.updateOne(
