@@ -15,7 +15,7 @@ async function migrateChannelMemberships() {
     // Connect to MongoDB with proper database name
     const tenantId = process.env.TENANT_ID || 'tenant1';
     const databaseName = process.env.MONGODB_DATABASE || `community_db_ami`;
-    const MONGODB_URI = process.env.MONGODB_URI || '***REMOVED***';
+    const MONGODB_URI = process.env.MONGODB_URI || '';
     await mongoose.connect(MONGODB_URI, { dbName: databaseName });
     console.log('✅ Connected to MongoDB');
 
@@ -130,7 +130,7 @@ async function rollbackMigration() {
     console.log('🔄 Starting migration rollback...');
     
     const databaseName = process.env.MONGODB_DATABASE || `community_db_ami`;
-    const MONGODB_URI = process.env.MONGODB_URI || '***REMOVED***';
+    const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://support_db_user:BSfPX9M5bcs3Sbm4@cluster0.wchofks.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0';
     await mongoose.connect(MONGODB_URI, { dbName: databaseName });
     console.log('✅ Connected to MongoDB');
 
