@@ -1,6 +1,6 @@
 import express from 'express'
 import { validatePlatformToken } from '../middleware/auth.js'
-import { uploadBufferToS3Bucket2 } from '../services/mediaService.js'
+import { uploadBufferToS3Bucket2WithInfo } from '../services/mediaService.js'
 import { logger } from '../utils/logger.js'
 
 const router = express.Router()
@@ -17,18 +17,35 @@ const handleFileUpload = (req, res, next) => {
     isFirebaseFunction: !!(process.env.FUNCTIONS_EMULATOR || process.env.GCLOUD_PROJECT)
   });
 
+  // Allowed mime types (images by prefix + selected docs/videos)
+  const ALLOWED_MIME_TYPES = new Set([
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'video/mp4',
+    'video/quicktime',
+    'video/webm'
+  ])
+  const isAllowedType = (m) => (m && (m.startsWith('image/') || ALLOWED_MIME_TYPES.has(m)))
+
   // Check if files were uploaded
   if (req.files && req.files.length > 0) {
     const imageFile = req.files.find(file => file.fieldname === 'file');
     if (imageFile) {
-      // Validate file type
-      if (!imageFile.mimetype.startsWith('image/')) {
-        return res.status(400).json({ error: 'Only image files are allowed' });
+      // Validate file type via whitelist
+      if (!isAllowedType(imageFile.mimetype)) {
+        return res.status(400).json({ error: 'Unsupported file type' });
       }
-      
-      // Validate file size (10MB limit)
-      if (imageFile.buffer.length > 10 * 1024 * 1024) {
-        return res.status(400).json({ error: 'File too large. Maximum size is 10MB.' });
+
+      // Per-type size limits
+      const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
+      const MAX_DOC_BYTES = 20 * 1024 * 1024;   // 20MB
+      const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // 50MB
+      const sizeLimit = imageFile.mimetype.startsWith('image/')
+        ? MAX_IMAGE_BYTES
+        : (imageFile.mimetype.startsWith('video/') ? MAX_VIDEO_BYTES : MAX_DOC_BYTES)
+      if (imageFile.buffer.length > sizeLimit) {
+        return res.status(400).json({ error: `File too large. Maximum size is ${Math.floor(sizeLimit / (1024 * 1024))}MB.` });
       }
       
       // Add file to request object in multer-compatible format
@@ -57,12 +74,30 @@ router.post('/media/upload', validatePlatformToken, handleFileUpload, async (req
     if (!req.file || !req.file.buffer) {
       return res.status(400).json({ error: 'No file uploaded' })
     }
-    const url = await uploadBufferToS3Bucket2(req.file.buffer, {
+    const storage = await uploadBufferToS3Bucket2WithInfo(req.file.buffer, {
       contentType: req.file.mimetype,
       originalName: req.file.originalname,
       prefix: 'chat/media/'
     })
-    return res.status(201).json({ url })
+
+    const kind = req.file.mimetype.startsWith('image/')
+      ? 'image'
+      : (req.file.mimetype.startsWith('video/') ? 'video' : 'document')
+    const ext = (req.file.originalname && req.file.originalname.includes('.'))
+      ? req.file.originalname.split('.').pop().toLowerCase()
+      : null
+
+    return res.status(201).json({
+      url: storage.url,
+      metadata: {
+        kind,
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        originalName: req.file.originalname,
+        extension: ext,
+        storage
+      }
+    })
   } catch (e) {
     next(e)
   }
