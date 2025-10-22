@@ -5,6 +5,7 @@ import User from '../models/User.js'
 import chimeMessagingService from '../services/chimeMessagingService.js'
 import { AppError } from '../utils/errorHandler.js'
 import ChannelRoleAssignment from '../models/ChannelRoleAssignment.js'
+import UnreadCountService from '../services/unreadCountService.js'
 
 export const createChannel = async (req, res, next) => {
   try {
@@ -68,6 +69,20 @@ export const removeMember = async (req, res, next) => {
 
     // Remove from Mongo
     await Channel.updateOne({ _id: channelId }, { $pull: { members: user._id, admins: user._id } })
+    
+    // Clean up unread count tracking for the removed member
+    try {
+      await UnreadCountService.cleanupUnreadTracking(channelId, user._id.toString())
+      console.log('[Controller] Unread count tracking cleaned up for removed member', { channelId, userId: user._id })
+    } catch (unreadError) {
+      // Log error but don't fail the member removal
+      console.error('[Controller] Failed to cleanup unread count tracking', { 
+        channelId, 
+        userId: user._id, 
+        error: unreadError.message 
+      })
+    }
+    
     const updated = await Channel.findById(channelId)
     return res.json({ channel: updated })
   } catch (err) {
@@ -287,6 +302,27 @@ export const mirrorMessage = async (req, res, next) => {
     }
 
     const saved = await Message.create(doc)
+    
+    // Increment unread count for all channel members except the sender
+    try {
+      await UnreadCountService.incrementUnreadCount(channelId, author._id.toString(), {
+        messageId: saved._id.toString(),
+        messageContent: content.substring(0, 100) // Store truncated content for debugging
+      })
+      console.log('[Controller] mirrorMessage unread count incremented', { 
+        channelId, 
+        senderId: author._id,
+        messageId: saved._id 
+      })
+    } catch (unreadError) {
+      // Log error but don't fail the request
+      console.error('[Controller] mirrorMessage failed to increment unread count', { 
+        channelId, 
+        senderId: author._id,
+        error: unreadError.message 
+      })
+    }
+    
     try {
       const dbName = mongoose?.connection?.db?.databaseName
       const coll = Message?.collection?.collectionName
@@ -382,14 +418,41 @@ export const listChannels = async (req, res, next) => {
     // Create final list
     let merged = Array.from(byId.values())
 
-    // Sort: general first, then by name
+    // Get unread counts for all channels where user is a member
+    const channelIds = merged.filter(ch => ch.isMember).map(ch => ch._id)
+    const unreadCounts = await UnreadCountService.getUserUnreadSummary(user._id.toString())
+    
+    // Create a map of channelId -> unreadCount for quick lookup
+    const unreadMap = new Map()
+    unreadCounts.forEach(item => {
+      unreadMap.set(String(item.channelId), item.unreadCount)
+    })
+
+    // Add unread count to each channel
+    merged = merged.map(channel => ({
+      ...channel,
+      unreadCount: unreadMap.get(String(channel._id)) || 0,
+      hasUnread: (unreadMap.get(String(channel._id)) || 0) > 0
+    }))
+
+    // Sort: general first, then by unread count (desc), then by name
     merged.sort((a, b) => {
       if (a.isDefaultGeneral) return -1
       if (b.isDefaultGeneral) return 1
+      
+      // Sort by unread count (descending) first
+      const aUnread = a.unreadCount || 0
+      const bUnread = b.unreadCount || 0
+      if (aUnread !== bUnread) return bUnread - aUnread
+      
+      // Then by name
       return String(a.name || '').localeCompare(String(b.name || ''))
     })
 
-    console.log('[Controller] listChannels success', { channelCount: merged.length })
+    console.log('[Controller] listChannels success', { 
+      channelCount: merged.length,
+      totalUnread: merged.reduce((sum, ch) => sum + (ch.unreadCount || 0), 0)
+    })
     return res.json({ channels: merged })
   } catch (err) {
     console.error('[Controller] listChannels error', { error: err.message, stack: err.stack })
@@ -513,6 +576,79 @@ export const unreactToMessage = async (req, res, next) => {
 
     return res.json(payload)
   } catch (err) {
+    return next(err)
+  }
+}
+
+export const markChannelAsRead = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+
+    const user = await User.findById(req.auth.userId)
+    if (!user) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+
+    const channel = await Channel.findById(channelId)
+    if (!channel) return next(new AppError('Channel not found', 404, 'NOT_FOUND'))
+
+    // Mark channel as read for the user
+    const membership = await UnreadCountService.markAsRead(channelId, req.auth.userId)
+    
+    console.log('[Controller] markChannelAsRead success', { 
+      channelId, 
+      userId: req.auth.userId,
+      previousUnreadCount: membership.unreadCount 
+    })
+
+    return res.json({ 
+      success: true, 
+      unreadCount: membership.unreadCount,
+      lastReadAt: membership.lastReadAt 
+    })
+  } catch (err) {
+    console.error('[Controller] markChannelAsRead error', { error: err.message, stack: err.stack })
+    return next(err)
+  }
+}
+
+export const getUserUnreadSummary = async (req, res, next) => {
+  try {
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+
+    const user = await User.findById(req.auth.userId)
+    if (!user) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+
+    const summary = await UnreadCountService.getUserUnreadSummary(req.auth.userId)
+    
+    console.log('[Controller] getUserUnreadSummary success', { 
+      userId: req.auth.userId,
+      channelCount: summary.length,
+      totalUnread: summary.reduce((sum, item) => sum + item.unreadCount, 0)
+    })
+
+    return res.json({ summary })
+  } catch (err) {
+    console.error('[Controller] getUserUnreadSummary error', { error: err.message, stack: err.stack })
+    return next(err)
+  }
+}
+
+export const getChannelUnreadCount = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+
+    const user = await User.findById(req.auth.userId)
+    if (!user) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+
+    const channel = await Channel.findById(channelId)
+    if (!channel) return next(new AppError('Channel not found', 404, 'NOT_FOUND'))
+
+    const unreadCount = await UnreadCountService.getUnreadCount(channelId, req.auth.userId)
+    
+    return res.json({ unreadCount })
+  } catch (err) {
+    console.error('[Controller] getChannelUnreadCount error', { error: err.message, stack: err.stack })
     return next(err)
   }
 }

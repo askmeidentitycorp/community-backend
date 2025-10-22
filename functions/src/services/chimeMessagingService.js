@@ -365,6 +365,20 @@ async function addMember({ channelId, user, operatorUser }) {
   
   if (updateResult.modifiedCount > 0) {
     logger.info('[Chime] Member added to MongoDB channel', { channelId, userId: user._id })
+    
+    // Ensure unread count tracking exists for the new member
+    try {
+      const UnreadCountService = (await import('./unreadCountService.js')).default
+      await UnreadCountService.ensureUnreadTracking(channelId, user._id.toString())
+      logger.info('[Chime] Unread count tracking ensured for new member', { channelId, userId: user._id })
+    } catch (unreadError) {
+      // Log error but don't fail the membership addition
+      logger.error('[Chime] Failed to ensure unread count tracking', { 
+        channelId, 
+        userId: user._id, 
+        error: unreadError.message 
+      })
+    }
   } else {
     logger.info('[Chime] Member already in MongoDB channel', { channelId, userId: user._id })
   }

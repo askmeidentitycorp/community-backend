@@ -1,7 +1,7 @@
 import express from 'express'
 import { validatePlatformToken } from '../middleware/auth.js'
 import { requireRole, ROLES, requireChannelModerator, requireChannelModeratorOrPublicJoin } from '../middleware/rbac.js'
-import { createChannel, addMember, removeMember, listMessages, sendMessage, getChannel, ensureGeneralAndJoin, listChannels, mirrorMessage, reactToMessage, unreactToMessage, grantChannelModerator, revokeChannelModerator, listChannelModerators, deleteChannel, deleteChannelMessage } from '../controllers/channelController.js'
+import { createChannel, addMember, removeMember, listMessages, sendMessage, getChannel, ensureGeneralAndJoin, listChannels, mirrorMessage, reactToMessage, unreactToMessage, grantChannelModerator, revokeChannelModerator, listChannelModerators, deleteChannel, deleteChannelMessage, markChannelAsRead, getUserUnreadSummary, getChannelUnreadCount } from '../controllers/channelController.js'
 
 const router = express.Router()
 
@@ -31,6 +31,11 @@ router.post('/channels/:channelId/messages/unreact', validatePlatformToken, unre
 router.get('/channels/:channelId/moderators', validatePlatformToken, listChannelModerators)
 router.post('/channels/:channelId/moderators', validatePlatformToken, requireRole([ROLES.SUPER_ADMIN]), grantChannelModerator)
 router.delete('/channels/:channelId/moderators/:userId', validatePlatformToken, requireRole([ROLES.SUPER_ADMIN]), revokeChannelModerator)
+
+// Unread count management
+router.post('/channels/:channelId/read', validatePlatformToken, markChannelAsRead)
+router.get('/channels/:channelId/unread', validatePlatformToken, getChannelUnreadCount)
+router.get('/channels/unread-summary', validatePlatformToken, getUserUnreadSummary)
 
 export default router
 
