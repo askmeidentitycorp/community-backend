@@ -143,6 +143,13 @@ router.put(
   userController.uploadAvatar
 );
 
+// Reset avatar to Auth0 picture
+router.post(
+  '/users/me/avatar/reset',
+  validatePlatformToken,
+  userController.resetAvatarToAuth0
+);
+
 // Update user (admin)
 router.put(
   '/users/:userId',

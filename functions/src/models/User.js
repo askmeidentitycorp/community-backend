@@ -68,7 +68,12 @@ const UserSchema = new Schema(
       type: String,
       trim: true,
     },
-    // Binary avatar storage
+    // Auth0 profile picture URL (from Auth0 ID token)
+    auth0Picture: {
+      type: String,
+      trim: true,
+    },
+    // Binary avatar storage (user uploaded)
     avatarBinary: {
       type: Buffer,
       select: false,
@@ -76,6 +81,12 @@ const UserSchema = new Schema(
     avatarContentType: {
       type: String,
       select: false,
+    },
+    // Avatar source: 'auth0', 'uploaded', or 'default'
+    avatarSource: {
+      type: String,
+      enum: ['auth0', 'uploaded', 'default'],
+      default: 'default',
     },
     coverImage: {
       type: String,
@@ -148,6 +159,21 @@ UserSchema.pre('save', function(next) {
 // Virtual for is_authenticated
 UserSchema.virtual('is_authenticated').get(function() {
   return this.isActive && !this.isDeleted;
+});
+
+// Virtual for avatar URL - returns the best available avatar
+UserSchema.virtual('avatarUrl').get(function() {
+  // Priority: uploaded binary -> Auth0 picture -> profilePicture -> default
+  if (this.avatarSource === 'uploaded' && this.avatarBinary) {
+    return `/api/v1/users/${this._id}/avatar`; // Binary avatar endpoint
+  }
+  if (this.avatarSource === 'auth0' && this.auth0Picture) {
+    return this.auth0Picture;
+  }
+  if (this.profilePicture) {
+    return this.profilePicture;
+  }
+  return null; // Frontend can handle default avatar
 });
 
 // Method to check if user has role

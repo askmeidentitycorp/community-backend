@@ -184,6 +184,7 @@ class AuthController {
       const name = verified.name || (email ? email.split('@')[0] : 'User');
       const firstName = verified.given_name || '';
       const lastName = verified.family_name || '';
+      const picture = verified.picture || ''; // Auth0 profile picture URL
 
       // Get or create user
       let user = await User.findOne({ auth0Id });
@@ -199,10 +200,38 @@ class AuthController {
           lastLogin: new Date(),
           roles: ['member'],
         });
+        
+        // Set Auth0 profile picture if available
+        if (picture) {
+          user.auth0Picture = picture;
+          user.avatarSource = 'auth0';
+          user.profilePicture = picture; // Also set profilePicture for backward compatibility
+        }
+        
         await user.save();
-        logger.info('Auth0: user created (code-exchange)', { userId: user._id.toString(), email });
+        logger.info('Auth0: user created (code-exchange)', { 
+          userId: user._id.toString(), 
+          email,
+          hasPicture: !!picture,
+          avatarSource: user.avatarSource
+        });
       } else {
         user.lastLogin = new Date();
+        
+        // Update Auth0 picture if it's different and user hasn't uploaded their own
+        if (picture && user.avatarSource !== 'uploaded') {
+          if (user.auth0Picture !== picture) {
+            user.auth0Picture = picture;
+            user.avatarSource = 'auth0';
+            user.profilePicture = picture;
+            logger.info('Auth0: updated profile picture (code-exchange)', { 
+              userId: user._id.toString(),
+              oldPicture: user.auth0Picture,
+              newPicture: picture
+            });
+          }
+        }
+        
         await user.save();
         logger.info('Auth0: user login (code-exchange)', { userId: user._id.toString(), email });
       }
@@ -246,6 +275,8 @@ class AuthController {
           firstName: user.firstName,
           lastName: user.lastName,
           roles: Array.isArray(user.roles) ? user.roles : [],
+          avatarUrl: user.avatarUrl, // Use the virtual property
+          avatarSource: user.avatarSource,
         },
       });
     } catch (error) {
@@ -680,6 +711,7 @@ class AuthController {
       const name = verified.name || (email ? email.split('@')[0] : 'User')
       const firstName = verified.given_name || ''
       const lastName = verified.family_name || ''
+      const picture = verified.picture || '' // Auth0 profile picture URL
 
       // Get or create LMSUser record
       let user = await User.findOne({ auth0Id })
@@ -695,11 +727,39 @@ class AuthController {
           lastLogin: new Date(),
           roles: ['member']
         })
+        
+        // Set Auth0 profile picture if available
+        if (picture) {
+          user.auth0Picture = picture
+          user.avatarSource = 'auth0'
+          user.profilePicture = picture // Also set profilePicture for backward compatibility
+        }
+        
         await user.save()
-        logger.info('Auth0: user created', { userId: user._id.toString(), email })
+        logger.info('Auth0: user created', { 
+          userId: user._id.toString(), 
+          email, 
+          hasPicture: !!picture,
+          avatarSource: user.avatarSource 
+        })
       } else {
-        // Update last login
+        // Update last login and Auth0 picture if it changed
         user.lastLogin = new Date()
+        
+        // Update Auth0 picture if it's different and user hasn't uploaded their own
+        if (picture && user.avatarSource !== 'uploaded') {
+          if (user.auth0Picture !== picture) {
+            user.auth0Picture = picture
+            user.avatarSource = 'auth0'
+            user.profilePicture = picture
+            logger.info('Auth0: updated profile picture', { 
+              userId: user._id.toString(),
+              oldPicture: user.auth0Picture,
+              newPicture: picture 
+            })
+          }
+        }
+        
         await user.save()
         logger.info('Auth0: user login', { userId: user._id.toString(), email })
       }
@@ -743,7 +803,9 @@ class AuthController {
         name: user.name,
         firstName: user.firstName,
         lastName: user.lastName,
-        roles: Array.isArray(user.roles) ? user.roles : []
+        roles: Array.isArray(user.roles) ? user.roles : [],
+        avatarUrl: user.avatarUrl,
+        avatarSource: user.avatarSource
       })))
 
       logger.info('Auth0: redirecting back to FE', {

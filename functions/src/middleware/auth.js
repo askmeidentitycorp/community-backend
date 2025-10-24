@@ -4,6 +4,7 @@ import { AppError } from '../utils/errorHandler.js';
 import auth0Config from '../config/auth0.js';
 import { logger } from '../utils/logger.js';
 import { PERMISSIONS, ROLES } from './rbac.js';
+import Session from '../models/Session.js';
 
 // Setup JWT validation for Auth0 tokens
 const jwksClient = jwksRsa({
@@ -76,7 +77,7 @@ export const validateAuth0Token = async (req, res, next) => {
 };
 
 // Validate our platform JWT
-export const validatePlatformToken = (req, res, next) => {
+export const validatePlatformToken = async (req, res, next) => {
   try {
     logger.info('Middleware: validatePlatformToken start');
     const authHeader = req.headers.authorization;
@@ -86,14 +87,32 @@ export const validatePlatformToken = (req, res, next) => {
 
     const token = authHeader.split(' ')[1];
     
-    // Verify using our JWT_SECRET
+    // Step 1: Verify JWT signature and expiration
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    // No tenant validation needed
+    // Step 2: Check if session is still active in database
+    const session = await Session.findOne({
+      accessToken: token,
+      isActive: true,
+      accessTokenExpiresAt: { $gt: new Date() }
+    });
     
-    // Attach auth info to request (support both userId and user_id)
+    if (!session) {
+      logger.warn('Middleware: session not found or inactive', { 
+        userId: decoded.userId,
+        tokenPreview: token.substring(0, 20) + '...'
+      });
+      return next(new AppError('Session revoked or expired', 401, 'SESSION_REVOKED'));
+    }
+    
+    // Step 3: Update last used time
+    await Session.updateOne(
+      { _id: session._id },
+      { $set: { lastUsedAt: new Date() } }
+    );
+    
+    // Step 4: Attach auth info to request
     const roles = decoded.roles || [];
-    // Derive permissions from roles if explicit permissions not present
     let permissions = decoded.permissions || [];
     if (!permissions.length && roles.length) {
       const derived = new Set();
@@ -108,6 +127,7 @@ export const validatePlatformToken = (req, res, next) => {
     }
     req.auth = {
       userId: decoded.userId || decoded.user_id,
+      sessionId: session._id,
       roles,
       permissions,
     };

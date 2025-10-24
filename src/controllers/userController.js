@@ -335,12 +335,69 @@ class UserController {
       if (!user) {
         throw new AppError('User not found', 404, 'USER_NOT_FOUND');
       }
+      
+      // Store binary avatar and update source
       user.avatarBinary = buffer;
       user.avatarContentType = contentType;
-      // Optional: keep a tiny data URL placeholder in profilePicture for quick display if needed
+      user.avatarSource = 'uploaded';
+      // Clear profilePicture URL since we're now using binary storage
       user.profilePicture = '';
+      
       await user.save();
-      return res.status(200).json({ success: true });
+      
+      logger.info('Avatar uploaded', { 
+        userId: user._id.toString(), 
+        avatarSource: user.avatarSource,
+        binarySize: buffer.length 
+      });
+      
+      return res.status(200).json({ 
+        success: true,
+        avatarUrl: `/api/v1/users/${user._id}/avatar`,
+        avatarSource: 'uploaded'
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  // Reset avatar back to Auth0 picture
+  async resetAvatarToAuth0(req, res, next) {
+    try {
+      if (!req.auth) {
+        throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+      }
+      const userId = req.auth.userId;
+
+      const user = await User.findOne({ _id: userId });
+      if (!user) {
+        throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+      }
+
+      if (!user.auth0Picture) {
+        throw new AppError('No Auth0 profile picture available', 400, 'NO_AUTH0_PICTURE');
+      }
+
+      // Reset to Auth0 picture
+      user.avatarSource = 'auth0';
+      user.profilePicture = user.auth0Picture;
+      // Clear binary data
+      user.avatarBinary = undefined;
+      user.avatarContentType = undefined;
+      
+      await user.save();
+      
+      logger.info('Avatar reset to Auth0', { 
+        userId: user._id.toString(), 
+        avatarSource: user.avatarSource,
+        auth0Picture: user.auth0Picture
+      });
+      
+      return res.status(200).json({ 
+        success: true,
+        avatarUrl: user.auth0Picture,
+        avatarSource: 'auth0'
+      });
     } catch (error) {
       next(error);
     }
