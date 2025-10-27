@@ -232,13 +232,33 @@ class UserController {
       if (!userId) {
         throw new AppError('User ID is required', 400, 'BAD_REQUEST');
       }
-      const user = await User.findById(userId).select('+avatarBinary +avatarContentType');
-      if (!user || !user.avatarBinary || !user.avatarContentType) {
+      
+      // Select all avatar-related fields
+      const user = await User.findById(userId).select('+avatarBinary +avatarContentType avatarSource auth0Picture profilePicture');
+      
+      if (!user) {
         return res.status(404).send();
       }
-      res.setHeader('Content-Type', user.avatarContentType);
-      res.setHeader('Cache-Control', 'private, max-age=3600');
-      return res.status(200).send(user.avatarBinary);
+      
+      // Priority 1: Uploaded binary avatar
+      if (user.avatarBinary && user.avatarContentType) {
+        res.setHeader('Content-Type', user.avatarContentType);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        return res.status(200).send(user.avatarBinary);
+      }
+      
+      // Priority 2: Auth0 picture (redirect to external URL)
+      if (user.avatarSource === 'auth0' && user.auth0Picture) {
+        return res.redirect(302, user.auth0Picture);
+      }
+      
+      // Priority 3: Legacy profilePicture (redirect to external URL)
+      if (user.profilePicture) {
+        return res.redirect(302, user.profilePicture);
+      }
+      
+      // No avatar available
+      return res.status(404).send();
     } catch (error) {
       next(error);
     }

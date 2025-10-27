@@ -290,11 +290,49 @@ export const redactChannelMessage = async (req, res, next) => {
     const isModerator = moderatorUserIds.includes(String(operator._id))
     
     // Check if user is the author of the message
-    const isAuthor = message.authorId && String(message.authorId._id) === String(operator._id)
+    // Handle both populated (object with _id) and non-populated (plain ObjectId) cases
+    console.log('[Controller] redactChannelMessage - Auth check details:', {
+      operatorId: operator._id,
+      operatorIdString: String(operator._id),
+      messageAuthorId: message.authorId,
+      messageAuthorIdType: typeof message.authorId,
+      isPopulated: !!(message.authorId && message.authorId._id),
+      populatedAuthorId: message.authorId?._id,
+      isModerator,
+      channelId
+    })
+    
+    const authorIdStr = message.authorId 
+      ? String(message.authorId._id || message.authorId) 
+      : null
+    const isAuthor = authorIdStr && authorIdStr === String(operator._id)
+    
+    console.log('[Controller] redactChannelMessage - Permission check:', {
+      authorIdStr,
+      operatorIdStr: String(operator._id),
+      isAuthor,
+      isModerator,
+      willAllow: isModerator || isAuthor
+    })
     
     if (!isModerator && !isAuthor) {
+      console.error('[Controller] redactChannelMessage - FORBIDDEN:', {
+        reason: 'User is neither moderator nor author',
+        userId: operator._id,
+        messageId,
+        messageAuthor: authorIdStr,
+        isModerator,
+        isAuthor
+      })
       return next(new AppError('Only channel moderators can redact messages, or users can redact their own messages', 403, 'FORBIDDEN'))
     }
+    
+    console.log('[Controller] redactChannelMessage - Permission granted:', {
+      userId: operator._id,
+      messageId,
+      isModerator,
+      isAuthor
+    })
     
     const result = await chimeMessagingService.redactChannelMessage({ channelId, messageId, operatorUser: operator })
     return res.json(result)
