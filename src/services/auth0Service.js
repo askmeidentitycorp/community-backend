@@ -1,6 +1,7 @@
 import axios from 'axios';
 import auth0Config from '../config/auth0.js';
 import { logger } from '../utils/logger.js';
+import { Tenant } from '../models/tenantModel.js';
 
 /**
  * Service for interacting with Auth0 Management API
@@ -220,6 +221,59 @@ class Auth0Service {
     } catch (error) {
       logger.error('Failed to update user metadata in Auth0:', error);
       throw new Error('Failed to update user metadata in Auth0');
+    }
+  }
+
+  // onboard tenant
+ async onboardTenant(tenantData) {
+    try {
+      //  Validate required fields
+      if (!tenantData?.tenantName || !tenantData?.slug || !tenantData?.email) {
+        return {
+          success: false,
+          message: "Missing required fields: tenantName, slug, or email",
+        };
+      }
+
+      //  Check if tenant already exists by slug or email
+      const existingTenant = await Tenant.findOne({
+        $or: [{ slug: tenantData.slug }, { email: tenantData.email }],
+      });
+
+      if (existingTenant) {
+        return {
+          success: false,
+          message: "Tenant already exists with this slug or email",
+        };
+      }
+
+      //  Prepare tenant data
+      const tenantPayload = {
+        tenantName: tenantData.tenantName,
+        slug: tenantData.slug,
+        email: tenantData.email,
+        status: tenantData.status || "active",
+        plan: tenantData.plan || "free",
+        userOnboardUrl:
+          tenantData.userOnboardUrl ||
+          `https://${tenantData.slug}.askmeidentity.com/onboard`,
+      };
+
+      //  Save tenant in MongoDB
+      const tenant = await Tenant.create(tenantPayload);
+
+      //  Success response
+      return {
+        success: true,
+        data: tenant,
+      };
+    } catch (error) {
+      logger?.error?.(" Failed to onboard tenant:", error);
+
+      return {
+        success: false,
+        message: error.message || "Failed to onboard tenant",
+      };
     }
   }
 }

@@ -92,4 +92,7 @@ router.post(
   authController.revokeAllSessions
 );
 
+
+router.post('/onboard-tenant/', authController.onboardTenant);
+
 export default router;
