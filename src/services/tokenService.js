@@ -222,18 +222,23 @@ class TokenService {
         return null;
       }
       
-      // Create new payload
+      // Create new payload - MUST include roles for RBAC to work!
       const payload = {
         user_id: user._id,
         email: user.email,
         name: user.name,
+        roles: Array.isArray(user.roles) ? user.roles : [],
         iat: Math.floor(Date.now() / 1000),
         type: 'access'
       };
       
       // Generate new access token
       const newAccessToken = this.generateAccessToken(payload);
-      logger.info('TokenService: new access token generated');
+      logger.info('TokenService: new access token generated', { 
+        userId: user._id, 
+        roles: payload.roles,
+        hasRoles: payload.roles.length > 0 
+      });
       
       // Update session with new access token
       const accessTtl = parseInt(process.env.JWT_ACCESS_TOKEN_LIFETIME || '3600', 10);

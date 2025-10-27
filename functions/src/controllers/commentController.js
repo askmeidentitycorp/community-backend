@@ -89,7 +89,7 @@ class CommentController {
       }
 
       const { discussionId } = req.params;
-      const { content, parentId } = req.body;
+      const { content, parentId, mentions } = req.body;
 
       // Handle optional image upload via multipart form-data
       let imageUrl = ''
@@ -101,16 +101,30 @@ class CommentController {
         })
       }
 
+      // Validate mentions if provided
+      let validMentions = []
+      if (Array.isArray(mentions) && mentions.length > 0) {
+        validMentions = mentions.filter(id => mongoose.Types.ObjectId.isValid(id))
+        if (validMentions.length > 0) {
+          logger.info('Comment mentions extracted', { 
+            discussionId, 
+            mentionCount: validMentions.length,
+            mentions: validMentions 
+          })
+        }
+      }
+
       const comment = new Comment({
         discussionId,
         parentId: parentId || undefined,
         authorId: req.auth.userId,
         content,
         imageUrl: imageUrl || undefined,
+        mentions: validMentions.length > 0 ? validMentions : undefined,
       });
 
       await comment.save();
-      logger.info('Comment created', { id: comment._id.toString(), discussionId });
+      logger.info('Comment created', { id: comment._id.toString(), discussionId, mentions: validMentions });
 
       return res.status(201).json({
         comment: {
@@ -126,6 +140,7 @@ class CommentController {
           isEdited: false,
           createdAt: comment.createdAt,
           updatedAt: comment.updatedAt,
+          mentions: comment.mentions || [],
         }
       });
     } catch (error) {

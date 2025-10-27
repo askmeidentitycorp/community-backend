@@ -405,7 +405,44 @@ class UserController {
 
   async updateUser(req, res, next) {
     try {
-      res.status(200).json({ message: 'updateUser not implemented yet' });
+      const { userId } = req.params;
+      const { name, title, department, status } = req.body;
+      
+      if (!userId) {
+        throw new AppError('User ID is required', 400, 'BAD_REQUEST');
+      }
+
+      // Find the user
+      const user = await User.findById(userId);
+      
+      if (!user) {
+        throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+      }
+
+      // Update user fields
+      if (name) user.name = name;
+      if (title !== undefined) user.title = title;
+      if (department !== undefined) user.department = department;
+      if (status) user.status = status;
+
+      await user.save();
+      logger.info(`User updated by admin: ${userId}`, { 
+        updatedFields: { name, title, department, status },
+        roles: user.roles 
+      });
+
+      return res.status(200).json({
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        avatar: user.profilePicture,
+        title: user.title,
+        department: user.department,
+        roles: user.roles,
+        status: user.status,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      });
     } catch (error) {
       next(error);
     }
@@ -413,7 +450,69 @@ class UserController {
 
   async assignRoles(req, res, next) {
     try {
-      res.status(200).json({ message: 'assignRoles not implemented yet' });
+      const { userId } = req.params;
+      const { roles } = req.body;
+      
+      if (!userId) {
+        throw new AppError('User ID is required', 400, 'BAD_REQUEST');
+      }
+
+      if (!roles || !Array.isArray(roles) || roles.length === 0) {
+        throw new AppError('Roles array is required', 400, 'BAD_REQUEST');
+      }
+
+      // Find the user
+      const user = await User.findById(userId);
+      
+      if (!user) {
+        throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+      }
+
+      // Store previous roles to check if user is becoming a super_admin or losing it
+      const previousRoles = user.roles || [];
+      const wasSuperAdmin = previousRoles.includes('super_admin');
+      const willBeSuperAdmin = roles.includes('super_admin');
+      const isBecomingSuperAdmin = willBeSuperAdmin && !wasSuperAdmin;
+
+      // Replace roles entirely (assignRoles sets the complete role list)
+      user.roles = roles;
+      await user.save();
+      logger.info(`Roles assigned to user: ${userId}`, { 
+        previousRoles, 
+        newRoles: roles 
+      });
+
+      // If the user is becoming a super_admin, promote them to AppInstanceAdmin in Chime
+      if (isBecomingSuperAdmin) {
+        try {
+          const chimeMessagingService = (await import('../services/chimeMessagingService.js')).default;
+          await chimeMessagingService.promoteToAppInstanceAdmin(user);
+          logger.info('User promoted to AppInstanceAdmin in Chime', { 
+            userId: user._id, 
+            userName: user.name,
+            newRoles: roles 
+          });
+        } catch (chimeError) {
+          // Log the error but don't fail the role assignment
+          logger.error('Failed to promote user to AppInstanceAdmin in Chime', { 
+            userId: user._id, 
+            error: chimeError.message 
+          });
+        }
+      }
+
+      return res.status(200).json({
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        avatar: user.profilePicture,
+        title: user.title,
+        department: user.department,
+        roles: user.roles,
+        status: user.status,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+      });
     } catch (error) {
       next(error);
     }

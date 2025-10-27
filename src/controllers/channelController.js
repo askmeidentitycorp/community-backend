@@ -333,9 +333,23 @@ export const mirrorMessage = async (req, res, next) => {
       externalRef: { provider: 'chime', messageId, channelArn: channel.chime.channelArn }
     }
     
-    // Add metadata if provided
+    // Extract mentions from metadata if provided
     if (metadata) {
       doc.metadata = metadata
+      
+      // Extract mentions array from metadata.mentions
+      if (Array.isArray(metadata.mentions) && metadata.mentions.length > 0) {
+        // Validate that all mention IDs are valid ObjectIds
+        const validMentions = metadata.mentions.filter(id => mongoose.Types.ObjectId.isValid(id))
+        if (validMentions.length > 0) {
+          doc.mentions = validMentions
+          console.log('[Controller] mirrorMessage extracted mentions', { 
+            messageId, 
+            mentionCount: validMentions.length,
+            mentions: validMentions 
+          })
+        }
+      }
     }
     
     if (createdTimestamp) {
@@ -368,7 +382,7 @@ export const mirrorMessage = async (req, res, next) => {
     try {
       const dbName = mongoose?.connection?.db?.databaseName
       const coll = Message?.collection?.collectionName
-      console.log('[Controller] mirrorMessage saved', { id: saved?._id, dbName, collection: coll })
+      console.log('[Controller] mirrorMessage saved', { id: saved?._id, dbName, collection: coll, mentions: saved.mentions })
     } catch {}
     return res.status(201).json({ message: saved })
   } catch (err) {

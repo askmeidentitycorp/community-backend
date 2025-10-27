@@ -41,6 +41,11 @@ const CommentSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    mentions: {
+      type: [Schema.Types.ObjectId],
+      ref: 'User',
+      default: [],
+    },
   },
   { timestamps: true }
 );
@@ -48,5 +53,6 @@ const CommentSchema = new Schema(
 // Indexes
 CommentSchema.index({ discussionId: 1, createdAt: 1 });
 CommentSchema.index({ parentId: 1 });
+CommentSchema.index({ mentions: 1 });
 
 export default mongoose.model('Comment', CommentSchema);

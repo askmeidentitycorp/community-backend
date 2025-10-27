@@ -55,7 +55,7 @@ const updateUserSchema = Joi.object({
 }).min(1);
 
 const assignRolesSchema = Joi.object({
-  roles: Joi.array().items(Joi.string().valid('member', 'moderator', 'tenant_admin')).min(1).required(),
+  roles: Joi.array().items(Joi.string().valid('super_admin', 'moderator', 'member')).min(1).required(),
 });
 
 const inviteUserSchema = Joi.object({

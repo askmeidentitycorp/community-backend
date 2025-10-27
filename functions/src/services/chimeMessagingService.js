@@ -1,5 +1,5 @@
 import { ChimeSDKMessagingClient, CreateChannelCommand, CreateChannelMembershipCommand, ListChannelMessagesCommand, SendChannelMessageCommand, DescribeChannelCommand, ListChannelsCommand, ListChannelMembershipsCommand, CreateChannelModeratorCommand, DeleteChannelMembershipCommand, DeleteChannelCommand, DeleteChannelMessageCommand, RedactChannelMessageCommand } from '@aws-sdk/client-chime-sdk-messaging'
-import { ChimeSDKIdentityClient, CreateAppInstanceUserCommand, DescribeAppInstanceUserCommand } from '@aws-sdk/client-chime-sdk-identity'
+import { ChimeSDKIdentityClient, CreateAppInstanceUserCommand, DescribeAppInstanceUserCommand, CreateAppInstanceAdminCommand } from '@aws-sdk/client-chime-sdk-identity'
 import Channel from '../models/Channel.js'
 import Message from '../models/Message.js'
 import { logger } from '../utils/logger.js'
@@ -70,6 +70,38 @@ async function ensureAppInstanceUser(user) {
     }))
     logger.info('[Chime] AppInstanceUser created successfully', { appInstanceUserArn })
     return appInstanceUserArn
+  }
+}
+
+async function promoteToAppInstanceAdmin(user) {
+  logger.info('[Chime] promoteToAppInstanceAdmin start', { userId: user._id, userName: user.name })
+  if (!user) throw new Error('User is required')
+  
+  try {
+    // Ensure the AppInstanceUser exists first
+    const appInstanceUserArn = await ensureAppInstanceUser(user)
+    
+    // Promote the user to AppInstanceAdmin
+    logger.info('[Chime] Promoting user to AppInstanceAdmin', { appInstanceUserArn, userName: user.name })
+    await adminIdentityClient.send(new CreateAppInstanceAdminCommand({
+      AppInstanceAdminArn: appInstanceUserArn,
+      AppInstanceArn: APP_INSTANCE_ARN
+    }))
+    
+    logger.info('[Chime] User promoted to AppInstanceAdmin successfully', { appInstanceUserArn })
+    return true
+  } catch (error) {
+    // If the user is already an admin, that's okay
+    if (error.name === 'ConflictException') {
+      logger.info('[Chime] User is already an AppInstanceAdmin', { userId: user._id, userName: user.name })
+      return true
+    }
+    logger.error('[Chime] Error promoting user to AppInstanceAdmin', { 
+      error: error.message, 
+      errorName: error.name,
+      userId: user._id 
+    })
+    throw error
   }
 }
 
@@ -567,6 +599,7 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
 
 export default {
   ensureAppInstanceUser,
+  promoteToAppInstanceAdmin,
   createChannel,
   checkChannelExistsInChime,
   syncChannelFromChime,

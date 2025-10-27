@@ -336,6 +336,19 @@ export const mirrorMessage = async (req, res, next) => {
     // Add metadata if provided
     if (metadata) {
       doc.metadata = metadata
+      
+      // Extract mentions from metadata if present
+      if (Array.isArray(metadata.mentions) && metadata.mentions.length > 0) {
+        const validMentions = metadata.mentions.filter(id => mongoose.Types.ObjectId.isValid(id))
+        if (validMentions.length > 0) {
+          doc.mentions = validMentions
+          console.log('[Controller] mirrorMessage extracted mentions', { 
+            messageId, 
+            mentionCount: validMentions.length,
+            mentions: validMentions 
+          })
+        }
+      }
     }
     
     if (createdTimestamp) {
