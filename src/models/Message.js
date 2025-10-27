@@ -31,6 +31,14 @@ const MessageSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    isRedacted: {
+      type: Boolean,
+      default: false,
+    },
+    redactedAt: {
+      type: Date,
+      default: null,
+    },
     metadata: {
       type: Schema.Types.Mixed,
       default: null,

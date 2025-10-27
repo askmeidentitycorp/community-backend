@@ -1,4 +1,4 @@
-import { ChimeSDKMessagingClient, CreateChannelCommand, CreateChannelMembershipCommand, ListChannelMessagesCommand, SendChannelMessageCommand, DescribeChannelCommand, ListChannelsCommand, ListChannelMembershipsCommand, CreateChannelModeratorCommand, DeleteChannelMembershipCommand, DeleteChannelCommand, DeleteChannelMessageCommand } from '@aws-sdk/client-chime-sdk-messaging'
+import { ChimeSDKMessagingClient, CreateChannelCommand, CreateChannelMembershipCommand, ListChannelMessagesCommand, SendChannelMessageCommand, DescribeChannelCommand, ListChannelsCommand, ListChannelMembershipsCommand, CreateChannelModeratorCommand, DeleteChannelMembershipCommand, DeleteChannelCommand, DeleteChannelMessageCommand, RedactChannelMessageCommand } from '@aws-sdk/client-chime-sdk-messaging'
 import { ChimeSDKIdentityClient, CreateAppInstanceUserCommand, DescribeAppInstanceUserCommand } from '@aws-sdk/client-chime-sdk-identity'
 import Channel from '../models/Channel.js'
 import Message from '../models/Message.js'
@@ -623,6 +623,35 @@ export default {
       ChimeBearer: operatorArn
     }))
     return { success: true }
+  },
+  async redactChannelMessage({ channelId, messageId, operatorUser }) {
+    const channel = await Channel.findById(channelId)
+    if (!channel || !channel?.chime?.channelArn) throw new Error('Channel not found or not mapped to Chime')
+    const operatorArn = await ensureAppInstanceUser(operatorUser)
+    logger.info('[Chime] Redacting channel message', { channelId, messageId, operatorArn })
+    
+    await adminMessagingClient.send(new RedactChannelMessageCommand({
+      ChannelArn: channel.chime.channelArn,
+      MessageId: messageId,
+      ChimeBearer: operatorArn
+    }))
+    
+    // Update the message in MongoDB to mark as redacted
+    // Set content to empty and add isRedacted flag to match Chime's behavior
+    await Message.updateOne(
+      { channelId, 'externalRef.provider': 'chime', 'externalRef.messageId': messageId },
+      { 
+        $set: { 
+          content: '',  // Empty content to match Chime redaction behavior
+          isEdited: true,
+          isRedacted: true,
+          redactedAt: new Date() // Track when message was redacted
+        } 
+      }
+    )
+    
+    logger.info('[Chime] Message redacted successfully', { channelId, messageId })
+    return { redacted: true }
   }
 }
 

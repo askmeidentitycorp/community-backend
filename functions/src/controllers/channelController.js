@@ -261,6 +261,48 @@ export const deleteChannelMessage = async (req, res, next) => {
   }
 }
 
+export const redactChannelMessage = async (req, res, next) => {
+  try {
+    const { channelId } = req.params
+    const { messageId } = req.body || {}
+    if (!messageId) return next(new AppError('messageId is required', 400, 'VALIDATION_ERROR'))
+    if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
+    
+    const operator = await User.findById(req.auth.userId)
+    if (!operator) return next(new AppError('User not found', 404, 'NOT_FOUND'))
+    
+    // Get the message to check if user is the author
+    const channel = await Channel.findById(channelId)
+    if (!channel) return next(new AppError('Channel not found', 404, 'NOT_FOUND'))
+    
+    // Find the message in MongoDB
+    const message = await Message.findOne({ 
+      channelId, 
+      'externalRef.provider': 'chime', 
+      'externalRef.messageId': messageId 
+    }).populate('authorId', 'name _id')
+    
+    if (!message) return next(new AppError('Message not found', 404, 'NOT_FOUND'))
+    
+    // Check if user is a moderator
+    const moderatorAssignments = await ChannelRoleAssignment.find({ channelId, role: 'moderator' })
+    const moderatorUserIds = moderatorAssignments.map(a => String(a.userId))
+    const isModerator = moderatorUserIds.includes(String(operator._id))
+    
+    // Check if user is the author of the message
+    const isAuthor = message.authorId && String(message.authorId._id) === String(operator._id)
+    
+    if (!isModerator && !isAuthor) {
+      return next(new AppError('Only channel moderators can redact messages, or users can redact their own messages', 403, 'FORBIDDEN'))
+    }
+    
+    const result = await chimeMessagingService.redactChannelMessage({ channelId, messageId, operatorUser: operator })
+    return res.json(result)
+  } catch (err) {
+    return next(err)
+  }
+}
+
 // Mirror a Chime message into Mongo without re-sending to Chime
 export const mirrorMessage = async (req, res, next) => {
   try {
