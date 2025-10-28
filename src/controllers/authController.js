@@ -282,6 +282,7 @@ class AuthController {
           avatarSource: user.avatarSource,
         },
       });
+    
     } catch (error) {
       logger.error('Auth0: code-exchange error', { error: error?.message });
       next(error);
@@ -832,7 +833,7 @@ class AuthController {
   async onboardTenant(req, res, next) {
     try{
       logger.info('Auth: onboardTenant start');
-      const { tenantName,slug,domain,email,phoneNumber,status  } = req.body;
+      const { tenantName,slug,domain,email,phoneNumber,status } = req.body;
       
       //onboard tenant via auth0 service
       const result = await auth0Service.onboardTenant({ tenantName,slug,domain,email,phoneNumber,status  });
