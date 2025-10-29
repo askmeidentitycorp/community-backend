@@ -120,7 +120,7 @@ class AuthController {
   async auth0CodeExchange(req, res, next) {
     try {
       logger.info('Auth0: code-exchange start');
-      const { code, code_verifier, redirect_uri } = req.body || {};
+      const { code, code_verifier, redirect_uri, tenantId } = req.body || {};
       if (!code || !code_verifier) {
         throw new AppError('Missing code or code_verifier', 400, 'INVALID_REQUEST');
       }
@@ -218,6 +218,12 @@ class AuthController {
           hasPicture: !!picture,
           avatarSource: user.avatarSource
         });
+        const result = await auth0Service.addUserToTenant(tenantId.toString(), user._id.toString(), 'member')
+        if(!result.success){
+          logger.error('Auth0: failed to add user to tenant', { userId: user._id.toString(), reason: result.message });
+          throw new AppError(result.message, 500, 'TENANT_USER_ADDITION_FAILED');
+        }
+        logger.info('Auth0: user added to tenant', { userId: user._id.toString(), tenantId: result.data.tenantId });
       } else {
         user.lastLogin = new Date();
         
@@ -238,13 +244,13 @@ class AuthController {
         await user.save();
         logger.info('Auth0: user login (code-exchange)', { userId: user._id.toString(), email });
       }
-      // Best-effort: ensure general channel and membership on login
+      // ensure general channel and membership on login
       await AuthController.ensureGeneralForUser(user)
 
       if (!user.isActive || user.isDeleted) {
         throw new AppError('User account is not active', 403, 'INACTIVE_ACCOUNT');
       }
-      // Best-effort: ensure general channel and membership on login
+      //: ensure general channel and membership on login
       await AuthController.ensureGeneralForUser(user)
 
       // Issue platform tokens
@@ -746,6 +752,7 @@ class AuthController {
           hasPicture: !!picture,
           avatarSource: user.avatarSource 
         })
+        
       } else {
         // Update last login and Auth0 picture if it changed
         user.lastLogin = new Date()
