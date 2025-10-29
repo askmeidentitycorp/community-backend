@@ -1,5 +1,5 @@
 import express from 'express';
-import { getUserMentions, markMentionAsRead } from '../controllers/mentionsController.js';
+import { getUserMentions, markMentionAsRead, markAllMentionsAsRead, getUnreadMentionCount } from '../controllers/mentionsController.js';
 import { validatePlatformToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -13,6 +13,20 @@ const router = express.Router();
  * @query type - Filter by type: 'message' or 'comment' (optional)
  */
 router.get('/', validatePlatformToken, getUserMentions);
+
+/**
+ * @route GET /api/v1/mentions/unread-count
+ * @desc Get unread mention count for authenticated user
+ * @access Private
+ */
+router.get('/unread-count', validatePlatformToken, getUnreadMentionCount);
+
+/**
+ * @route POST /api/v1/mentions/mark-all-read
+ * @desc Mark all mentions as read
+ * @access Private
+ */
+router.post('/mark-all-read', validatePlatformToken, markAllMentionsAsRead);
 
 /**
  * @route POST /api/v1/mentions/:type/:mentionId/read

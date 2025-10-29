@@ -37,6 +37,10 @@ export const getUserMentions = async (req, res, next) => {
       ? new mongoose.Types.ObjectId(userId) 
       : userId;
 
+    // Get user's read mentions to mark which ones are read
+    const user = await User.findById(userId).select('readMentions').lean();
+    const readMentionsSet = new Set(user?.readMentions || []);
+
     // Fetch message mentions (from channels) if type is not specified or is 'message'
     if (!type || type === 'message') {
       const messageMentions = await Message.find({
@@ -51,12 +55,14 @@ export const getUserMentions = async (req, res, next) => {
         .lean();
 
       for (const msg of messageMentions) {
+        const mentionKey = `message:${msg._id}`;
         results.push({
           id: msg._id,
           type: 'message',
           content: msg.content,
           createdAt: msg.createdAt,
           updatedAt: msg.updatedAt,
+          isRead: readMentionsSet.has(mentionKey),
           author: msg.authorId ? {
             id: msg.authorId._id,
             name: msg.authorId.name,
@@ -87,12 +93,14 @@ export const getUserMentions = async (req, res, next) => {
         .lean();
 
       for (const comment of commentMentions) {
+        const mentionKey = `comment:${comment._id}`;
         results.push({
           id: comment._id,
           type: 'comment',
           content: comment.content,
           createdAt: comment.createdAt,
           updatedAt: comment.updatedAt,
+          isRead: readMentionsSet.has(mentionKey),
           author: comment.authorId ? {
             id: comment.authorId._id,
             name: comment.authorId.name,
@@ -142,7 +150,7 @@ export const getUserMentions = async (req, res, next) => {
 };
 
 /**
- * Mark mention as read (optional feature for future)
+ * Mark mention as read
  */
 export const markMentionAsRead = async (req, res, next) => {
   try {
@@ -151,9 +159,28 @@ export const markMentionAsRead = async (req, res, next) => {
     }
 
     const { mentionId, type } = req.params;
+    const userId = req.auth.userId;
 
-    // This is a placeholder for future implementation
-    // You could add a 'readBy' field to track who has read each mention
+    // Validate type
+    if (!['message', 'comment'].includes(type)) {
+      throw new AppError('Invalid mention type. Must be "message" or "comment"', 400, 'BAD_REQUEST');
+    }
+
+    // Create mention key in format "type:id"
+    const mentionKey = `${type}:${mentionId}`;
+
+    // Update user's readMentions array
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+    }
+
+    // Add to readMentions if not already present
+    if (!user.readMentions.includes(mentionKey)) {
+      user.readMentions.push(mentionKey);
+      await user.save();
+      logger.info('Mention marked as read', { userId, mentionKey });
+    }
 
     return res.status(200).json({
       success: true,
@@ -161,6 +188,131 @@ export const markMentionAsRead = async (req, res, next) => {
     });
   } catch (error) {
     logger.error('Failed to mark mention as read', { error: error.message });
+    next(error);
+  }
+};
+
+/**
+ * Mark all mentions as read for the authenticated user
+ */
+export const markAllMentionsAsRead = async (req, res, next) => {
+  try {
+    if (!req.auth?.userId) {
+      throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+    }
+
+    const userId = req.auth.userId;
+    const userObjectId = mongoose.Types.ObjectId.isValid(userId) 
+      ? new mongoose.Types.ObjectId(userId) 
+      : userId;
+
+    // Get all message mentions
+    const messageMentions = await Message.find({
+      mentions: userObjectId
+    }).select('_id').lean();
+
+    // Get all comment mentions
+    const commentMentions = await Comment.find({
+      mentions: userObjectId
+    }).select('_id').lean();
+
+    // Create mention keys
+    const mentionKeys = [
+      ...messageMentions.map(m => `message:${m._id}`),
+      ...commentMentions.map(c => `comment:${c._id}`)
+    ];
+
+    // Update user's readMentions array
+    const user = await User.findById(userId);
+    if (!user) {
+      throw new AppError('User not found', 404, 'USER_NOT_FOUND');
+    }
+
+    // Merge with existing readMentions
+    const existingSet = new Set(user.readMentions);
+    mentionKeys.forEach(key => existingSet.add(key));
+    user.readMentions = Array.from(existingSet);
+    
+    await user.save();
+
+    logger.info('All mentions marked as read', { userId, count: mentionKeys.length });
+
+    return res.status(200).json({
+      success: true,
+      message: 'All mentions marked as read',
+      markedCount: mentionKeys.length
+    });
+  } catch (error) {
+    logger.error('Failed to mark all mentions as read', { error: error.message });
+    next(error);
+  }
+};
+
+/**
+ * Get unread mention count for the authenticated user
+ */
+export const getUnreadMentionCount = async (req, res, next) => {
+  try {
+    if (!req.auth?.userId) {
+      throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+    }
+
+    const userId = req.auth.userId;
+    const userObjectId = mongoose.Types.ObjectId.isValid(userId) 
+      ? new mongoose.Types.ObjectId(userId) 
+      : userId;
+
+    // Get user's read mentions
+    const user = await User.findById(userId).select('readMentions').lean();
+    const readMentionsSet = new Set(user?.readMentions || []);
+
+    // Get all message mentions
+    const messageMentions = await Message.find({
+      mentions: userObjectId
+    }).select('_id').lean();
+
+    // Get all comment mentions
+    const commentMentions = await Comment.find({
+      mentions: userObjectId
+    }).select('_id').lean();
+
+    // Count unread mentions
+    let unreadCount = 0;
+    let unreadMessageCount = 0;
+    let unreadCommentCount = 0;
+
+    messageMentions.forEach(m => {
+      const key = `message:${m._id}`;
+      if (!readMentionsSet.has(key)) {
+        unreadCount++;
+        unreadMessageCount++;
+      }
+    });
+
+    commentMentions.forEach(c => {
+      const key = `comment:${c._id}`;
+      if (!readMentionsSet.has(key)) {
+        unreadCount++;
+        unreadCommentCount++;
+      }
+    });
+
+    logger.info('Fetched unread mention count', { 
+      userId, 
+      unreadCount,
+      unreadMessageCount,
+      unreadCommentCount
+    });
+
+    return res.status(200).json({
+      unreadCount,
+      breakdown: {
+        messages: unreadMessageCount,
+        comments: unreadCommentCount
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to fetch unread mention count', { error: error.message });
     next(error);
   }
 };

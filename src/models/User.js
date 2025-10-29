@@ -132,6 +132,8 @@ const UserSchema = new Schema(
     dislikedDiscussions: [{ type: Schema.Types.ObjectId, ref: 'Discussion', default: [] }],
     likedComments: [{ type: Schema.Types.ObjectId, ref: 'Comment', default: [] }],
     dislikedComments: [{ type: Schema.Types.ObjectId, ref: 'Comment', default: [] }],
+    // Mention tracking - stores IDs of read mentions (format: "message:messageId" or "comment:commentId")
+    readMentions: [{ type: String, default: [] }],
   },
   { timestamps: true }
 );
