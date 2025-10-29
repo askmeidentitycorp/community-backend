@@ -16,6 +16,9 @@ import jwt from 'jsonwebtoken';
  * Controller for authentication endpoints
  */
 class AuthController {
+  constructor() {
+    this.auth0Service = auth0Service;
+  }
   // Ensure default general channel exists and user is a member (best-effort)
   static async ensureGeneralForUser(user) {
     try {
@@ -279,6 +282,7 @@ class AuthController {
           avatarSource: user.avatarSource,
         },
       });
+    
     } catch (error) {
       logger.error('Auth0: code-exchange error', { error: error?.message });
       next(error);
@@ -819,6 +823,34 @@ class AuthController {
     } catch (error) {
       logger.error('Auth0: callback error', { error: error?.message });
       next(error)
+    }
+  }
+
+  /**
+   * 
+    * Onboard new tenant
+   */
+  async onboardTenant(req, res, next) {
+    try{
+      logger.info('Auth: onboardTenant start');
+      const { tenantName,slug,domain,email,phoneNumber,status } = req.body;
+      
+      //onboard tenant via auth0 service
+      const result = await auth0Service.onboardTenant({ tenantName,slug,domain,email,phoneNumber,status  });
+      
+      if(!result.success){
+        logger.error('Auth: onboardTenant failed', { tenantDomain: domain, reason: result.message });
+        throw new AppError(result.message, 500, 'TENANT_ONBOARDING_FAILED');
+      }
+      res.status(200).json({
+        message: 'Tenant onboarded successfully',
+        tenantId: result.data
+      });
+      logger.info('Auth: onboardTenant success', { tenantDomain: domain });
+
+    }catch (error) {
+      logger.error('Auth: onboardTenant error', { error: error?.message });
+      next(error);
     }
   }
 }
