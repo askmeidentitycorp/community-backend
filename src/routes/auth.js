@@ -19,6 +19,7 @@ const codeExchangeSchema = Joi.object({
   code: Joi.string().required(),
   code_verifier: Joi.string().required(),
   redirect_uri: Joi.string().uri().optional(),
+  tenantId: Joi.string().optional(),
 });
 
 

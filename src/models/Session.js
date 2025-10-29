@@ -14,6 +14,16 @@ const SessionSchema = new Schema(
       ref: 'User',
       required: true,
     },
+    tenantId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Tenant',
+      required: false,
+    },
+    tenantUserLinkId: {
+      type: Schema.Types.ObjectId,
+      ref: 'TenantUserLink',
+      required: false,
+    },
     accessToken: {
       type: String,
       required: true,
@@ -64,6 +74,7 @@ const SessionSchema = new Schema(
 
 // Indexes
 SessionSchema.index({ user: 1, isActive: 1 });
+SessionSchema.index({ tenantId: 1, user: 1, isActive: 1 });
 SessionSchema.index({ sessionId: 1 }, { unique: true });
 SessionSchema.index({ accessToken: 1 });
 SessionSchema.index({ refreshToken: 1 });

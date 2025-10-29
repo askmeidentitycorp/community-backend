@@ -56,9 +56,9 @@ class TokenService {
   /**
    * Create a new session and issue tokens
    */
-  async createSession(userId, deviceInfo, auth0Token = null, auth0Subject = null, auth0RefreshToken = null) {
+  async createSession(userId, deviceInfo, auth0Token = null, auth0Subject = null, auth0RefreshToken = null, tenantId = null, tenantUserLinkId = null) {
     try {
-      logger.info('TokenService: createSession start', { userId });
+      logger.info('TokenService: createSession start', { userId, tenantId, tenantUserLinkId });
       // Get user roles and permissions
       const user = await User.findOne({ _id: userId });
       if (!user) {
@@ -75,12 +75,16 @@ class TokenService {
         email: user.email,
         name: user.name,
         roles: Array.isArray(user.roles) ? user.roles : [],
+        tenant_id: tenantId,
+        tenant_user_link_id: tenantUserLinkId,
         iat: Math.floor(Date.now() / 1000),
         type: 'access'
       };
       
       const refreshPayload = {
         user_id: user._id,
+        tenant_id: tenantId,
+        tenant_user_link_id: tenantUserLinkId,
         iat: Math.floor(Date.now() / 1000),
         type: 'refresh'
       };
@@ -104,6 +108,8 @@ class TokenService {
       const session = new Session({
         sessionId,
         user: user._id,
+        tenantId,
+        tenantUserLinkId,
         accessToken,
         refreshToken,
         accessTokenExpiresAt: accessExpiresAt,
@@ -223,11 +229,14 @@ class TokenService {
       }
       
       // Create new payload - MUST include roles for RBAC to work!
+      // Also include tenantId and tenantUserLinkId from session
       const payload = {
         user_id: user._id,
         email: user.email,
         name: user.name,
         roles: Array.isArray(user.roles) ? user.roles : [],
+        tenant_id: session.tenantId,
+        tenant_user_link_id: session.tenantUserLinkId,
         iat: Math.floor(Date.now() / 1000),
         type: 'access'
       };
@@ -236,6 +245,8 @@ class TokenService {
       const newAccessToken = this.generateAccessToken(payload);
       logger.info('TokenService: new access token generated', { 
         userId: user._id, 
+        tenantId: session.tenantId,
+        tenantUserLinkId: session.tenantUserLinkId,
         roles: payload.roles,
         hasRoles: payload.roles.length > 0 
       });

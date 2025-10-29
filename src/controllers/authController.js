@@ -4,6 +4,7 @@ import tokenService from '../services/tokenService.js';
 import sessionService from '../services/sessionService.js';
 import User from '../models/User.js';
 import Channel from '../models/Channel.js';
+import { TenantUserLink } from '../models/TenantUserLinkModel.js';
 import chimeMessagingService from '../services/chimeMessagingService.js';
 import { logger } from '../utils/logger.js';
 import auth0Config from '../config/auth0.js';
@@ -120,7 +121,28 @@ class AuthController {
   async auth0CodeExchange(req, res, next) {
     try {
       logger.info('Auth0: code-exchange start');
+      
+      // Log the entire request body to debug
+      logger.info('Auth0: code-exchange raw req.body', { 
+        body: req.body,
+        bodyType: typeof req.body,
+        bodyKeys: req.body ? Object.keys(req.body) : 'null',
+        contentType: req.headers['content-type']
+      });
+      
       const { code, code_verifier, redirect_uri, tenantId } = req.body || {};
+      
+      if (tenantId) {
+        logger.info('Auth0: code-exchange received tenantId', { 
+          tenantId,
+          tenantIdType: typeof tenantId 
+        });
+      } else {
+        logger.warn('Auth0: code-exchange no tenantId in request body', {
+          receivedKeys: req.body ? Object.keys(req.body) : 'body is null'
+        });
+      }
+      
       if (!code || !code_verifier) {
         throw new AppError('Missing code or code_verifier', 400, 'INVALID_REQUEST');
       }
@@ -191,6 +213,8 @@ class AuthController {
 
       // Get or create user
       let user = await User.findOne({ auth0Id });
+      let tenantUserLinkId = null;
+      
       if (!user) {
         user = new User({
           auth0Id,
@@ -218,12 +242,19 @@ class AuthController {
           hasPicture: !!picture,
           avatarSource: user.avatarSource
         });
-        const result = await auth0Service.addUserToTenant(tenantId.toString(), user._id.toString(), 'member')
-        if(!result.success){
-          logger.error('Auth0: failed to add user to tenant', { userId: user._id.toString(), reason: result.message });
-          throw new AppError(result.message, 500, 'TENANT_USER_ADDITION_FAILED');
+        
+        // Add user to tenant if tenantId is provided
+        if (tenantId) {
+          const result = await auth0Service.addUserToTenant(tenantId.toString(), user._id.toString(), 'member')
+          if(!result.success){
+            logger.error('Auth0: failed to add user to tenant', { userId: user._id.toString(), reason: result.message });
+            throw new AppError(result.message, 500, 'TENANT_USER_ADDITION_FAILED');
+          }
+          tenantUserLinkId = result.data._id;
+          logger.info('Auth0: user added to tenant', { userId: user._id.toString(), tenantId: result.data.tenantId, tenantUserLinkId });
+        } else {
+          logger.warn('Auth0: tenantId not provided, user created without tenant link', { userId: user._id.toString() });
         }
-        logger.info('Auth0: user added to tenant', { userId: user._id.toString(), tenantId: result.data.tenantId });
       } else {
         user.lastLogin = new Date();
         
@@ -243,6 +274,22 @@ class AuthController {
         
         await user.save();
         logger.info('Auth0: user login (code-exchange)', { userId: user._id.toString(), email });
+        
+        // Get existing tenant user link for this user and tenant
+        if (tenantId) {
+          const tenantUserLink = await TenantUserLink.findOne({ 
+            tenantId: tenantId.toString(), 
+            userId: user._id.toString() 
+          });
+          if (tenantUserLink) {
+            tenantUserLinkId = tenantUserLink._id;
+            logger.info('Auth0: found existing tenant user link', { tenantUserLinkId });
+          } else {
+            logger.warn('Auth0: no tenant user link found for existing user', { userId: user._id.toString(), tenantId });
+          }
+        } else {
+          logger.warn('Auth0: tenantId not provided for existing user login', { userId: user._id.toString() });
+        }
       }
       // ensure general channel and membership on login
       await AuthController.ensureGeneralForUser(user)
@@ -264,7 +311,9 @@ class AuthController {
         deviceInfo,
         access_token,
         auth0Id,
-        refresh_token
+        refresh_token,
+        tenantId,
+        tenantUserLinkId
       );
       logger.info('Auth0: platform tokens issued (code-exchange)', {
         userId: user._id.toString(),
@@ -849,11 +898,17 @@ class AuthController {
         logger.error('Auth: onboardTenant failed', { tenantDomain: domain, reason: result.message });
         throw new AppError(result.message, 500, 'TENANT_ONBOARDING_FAILED');
       }
+      
+      logger.info('Auth: onboardTenant success', { 
+        tenantDomain: domain, 
+        tenantId: result.data._id,
+        tenantSlug: result.data.slug 
+      });
+      
       res.status(200).json({
         message: 'Tenant onboarded successfully',
         tenantId: result.data
       });
-      logger.info('Auth: onboardTenant success', { tenantDomain: domain });
 
     }catch (error) {
       logger.error('Auth: onboardTenant error', { error: error?.message });
