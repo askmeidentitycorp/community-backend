@@ -66,7 +66,11 @@ async function ensureAppInstanceUser(user) {
     await adminIdentityClient.send(new CreateAppInstanceUserCommand({
       AppInstanceArn: APP_INSTANCE_ARN,
       AppInstanceUserId: appInstanceUserId,
-      Name: user.name || user.email || appInstanceUserId
+      Name: user.name || user.email || appInstanceUserId,
+      Metadata: {
+        Auth0Id: user.auth0Id,
+        Email: user.email
+      }
     }))
     logger.info('[Chime] AppInstanceUser created successfully', { appInstanceUserArn })
     return appInstanceUserArn
