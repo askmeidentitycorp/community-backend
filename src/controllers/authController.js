@@ -889,10 +889,10 @@ class AuthController {
   async onboardTenant(req, res, next) {
     try{
       logger.info('Auth: onboardTenant start');
-      const { tenantName,slug,domain,email,phoneNumber,status } = req.body;
+      const { tenantName,slug,domain,email,phoneNumber,status, password } = req.body;
       
       //onboard tenant via auth0 service
-      const result = await auth0Service.onboardTenant({ tenantName,slug,domain,email,phoneNumber,status  });
+      const result = await auth0Service.onboardTenant({ tenantName,slug,domain,email,phoneNumber,status, password });
       
       if(!result.success){
         logger.error('Auth: onboardTenant failed', { tenantDomain: domain, reason: result.message });
