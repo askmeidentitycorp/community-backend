@@ -130,6 +130,8 @@ export const validatePlatformToken = async (req, res, next) => {
       sessionId: session._id,
       roles,
       permissions,
+      tenantUserLinkId: decoded.tenant_user_link_id??'',// add this for indivdual chat or discuession
+      tenantId: decoded.tenant_id??'',// used for the channels
     };
     logger.info('Middleware: validatePlatformToken success', { userId: decoded?.userId });
     
