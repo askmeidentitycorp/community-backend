@@ -890,9 +890,12 @@ class AuthController {
     try{
       logger.info('Auth: onboardTenant start');
       const { tenantName,slug,domain,email,phoneNumber,status, password } = req.body;
-      
+         const deviceInfo = {
+        userAgent: req.headers['user-agent'],
+        ip: req.ip,
+      };
       //onboard tenant via auth0 service
-      const result = await auth0Service.onboardTenant({ tenantName,slug,domain,email,phoneNumber,status, password });
+      const result = await auth0Service.onboardTenant({ tenantName,slug,domain,email,phoneNumber,status, password },deviceInfo);
       
       if(!result.success){
         logger.error('Auth: onboardTenant failed', { tenantDomain: domain, reason: result.message });
@@ -907,11 +910,34 @@ class AuthController {
       
       res.status(200).json({
         message: 'Tenant onboarded successfully',
-        tenantId: result.data
+        data: result.data
       });
 
     }catch (error) {
       logger.error('Auth: onboardTenant error', { error: error?.message });
+      next(error);
+    }
+  }
+  getTenantOrganizations = async (req, res, next) => {
+    try {
+      logger.info('Auth: getTenantOrganizations start');  
+      const tenantId = req.query.tenantId;
+      if (!tenantId) {
+        throw new AppError('tenantId query parameter is required', 400, 'TENANT_ID_REQUIRED');
+      }
+     const result = await auth0Service.getOrganizationDetails(tenantId);
+      
+      if(!result.success){
+        logger.error('Auth: onboardTenant failed', { tenantDomain: domain, reason: result.message });
+        throw new AppError(result.message, 500, 'TENANT_ONBOARDING_FAILED');
+      }
+      res.status(200).json({  
+        success: true,
+      data: result.data
+      });
+      logger.info('Auth: getTenantOrganizations success', { tenantId, organizationCount: result.data.length });
+    } catch (error) {
+      logger.error('Auth: getTenantOrganizations error', { error: error?.message });
       next(error);
     }
   }

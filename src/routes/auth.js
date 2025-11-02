@@ -95,5 +95,6 @@ router.post(
 
 
 router.post('/onboard-tenant/', authController.onboardTenant);
+router.get('/tenants/organizations/', authController.getTenantOrganizations);
 
 export default router;

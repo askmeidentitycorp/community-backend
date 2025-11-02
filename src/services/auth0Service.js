@@ -3,6 +3,8 @@ import auth0Config from "../config/auth0.js";
 import { logger } from "../utils/logger.js";
 import { Tenant } from "../models/tenantModel.js";
 import { TenantUserLink } from "../models/TenantUserLinkModel.js"; // your model file
+import User from "../models/User.js";
+import tokenService from "./tokenService.js";
 
 /**
  * Service for interacting with Auth0 Management API
@@ -231,7 +233,7 @@ class Auth0Service {
   }
 
   // onboard tenant
-  async onboardTenant(tenantData) {
+  async onboardTenant(tenantData, deviceInfo = {}) {
     try {
       // Validate required fields
       if (
@@ -249,7 +251,8 @@ class Auth0Service {
 
       // Check if tenant already exists by slug or email
       const existingTenant = await Tenant.findOne({
-        $or: [{ slug: tenantData.slug }, { email: tenantData.email }],
+        slug: tenantData.slug,
+        email: tenantData.email,
       });
 
       if (existingTenant) {
@@ -298,7 +301,8 @@ class Auth0Service {
         orgResponse.data.organizationId,
         tenantData, // Pass entire tenantData object
         token,
-        connectionResponse.data.connectionName 
+        connectionResponse.data.connectionName,
+          connectionResponse.data.dbConnectionName,
       );
 
       if (!adminResponse.success) {
@@ -317,6 +321,7 @@ class Auth0Service {
           `https://${tenantData.slug}.askmeidentity.com/onboard`,
         auth0: {
           organizationId: orgResponse.data.organizationId,
+          organizationName: orgResponse.data.organizationName,
           connectionId: connectionResponse.data.connectionId,
           adminUserId: adminResponse.data.userId,
           connectionName: connectionResponse.data.connectionName,
@@ -326,14 +331,81 @@ class Auth0Service {
       // Save tenant in MongoDB
       const tenant = await Tenant.create(tenantPayload);
 
+      // create the user for the tenant and create linkId
+      let checkUser = await User.findOne({ email: tenantData.email });
+      let addUserToTenant;
+      if (checkUser) {
+        console.log(
+          "✅ Tenant admin user already exists in MongoDB:",
+          checkUser._id
+        );
+        addUserToTenant = await this.addUserToTenant(
+          tenant._id,
+          checkUser._id,
+          "admin"
+        );
+      }
+
+      if (!checkUser) {
+        const newUser = await User.create({
+          auth0Id: adminResponse.data.userId,
+          email: tenantData.email,
+          firstName: tenantData.slug,
+          lastName: "",
+          name: tenantData.tenantName,
+          isActive: true,
+          isVerified: true,
+          lastLogin: new Date(),
+          roles: ["super_admin"],
+          picture: adminResponse.data.picture,
+        });
+        checkUser = newUser;
+        addUserToTenant = await this.addUserToTenant(
+          tenant._id,
+          newUser._id,
+          "admin"
+        );
+      }
+
+      // create the token and share
+      const { accessToken, refreshToken, sessionId } =
+        await tokenService.createSession(
+          checkUser._id.toString(),
+          deviceInfo,
+          null,
+          adminResponse.data.adminUserId,
+          null,
+          tenant._id,
+          addUserToTenant.data._id.toString()
+        );
+      logger.info("Auth0: platform tokens issued (code-exchange)", {
+        userId: checkUser._id.toString(),
+        sessionId: sessionId?.toString?.() || sessionId,
+      });
+
       // Success response
       return {
         success: true,
-        data: tenant,
-        auth0: {
-          organization: orgResponse.data,
-          connection: connectionResponse.data,
-          admin: adminResponse.data,
+        data: {
+          tenant: tenant,
+          token: accessToken,
+          refreshToken,
+          id_token: accessToken,
+          auth0: {
+            organization: orgResponse.data,
+            connection: connectionResponse.data,
+            admin: adminResponse.data,
+          },
+          user: {
+            id: checkUser._id,
+            email: checkUser.email,
+            name: checkUser.name,
+            firstName: checkUser?.firstName,
+            lastName: checkUser?.lastName ?? "",
+            roles: Array.isArray(checkUser.roles) ? checkUser.roles : [],
+            avatarUrl: checkUser?.avatarUrl ?? "",
+            avatarSource: checkUser?.avatarSource ?? "",
+          },
         },
       };
     } catch (error) {
@@ -345,7 +417,6 @@ class Auth0Service {
     }
   }
 
-  
   async createAuth0Organization(tenantData, token) {
     try {
       // Format organization name according to Auth0 requirements
@@ -370,14 +441,7 @@ class Auth0Service {
         },
       };
 
-      // Log the actual payload being sent
-      console.log(
-        "Auth0 Organization Payload:",
-        JSON.stringify(payload, null, 2)
-      );
-      console.log("Organization Name:", organizationName);
-      console.log("Organization Name Type:", typeof organizationName);
-
+      
       const response = await fetch(
         `https://${auth0Config.domain}/api/v2/organizations`,
         {
@@ -406,7 +470,7 @@ class Auth0Service {
         success: true,
         data: {
           organizationId: orgData.id,
-          organizationName: orgData.name,
+          organizationName: organizationName,
           displayName: orgData.display_name,
         },
       };
@@ -425,15 +489,17 @@ class Auth0Service {
 
   async createAuth0Connection(tenantData, token) {
     try {
-      const connectionName = `${tenantData.slug.toLowerCase()}-${
-        tenantData.email.split("@")[0]
-      }-connection`;
+      const connectionName = `${tenantData.slug.toLowerCase()}-${Date.now()}-connection`;
+      const realm = `${tenantData.slug.toLowerCase()}-${Date.now()}`;
+
       const payload = {
         name: connectionName,
         display_name: `${tenantData.tenantName} Database Connection`,
         strategy: "auth0",
         options: {
           // Remove validation object since we're using attributes
+         allowSignup: true,
+         disable_signup: false,
           non_persistent_attrs: [],
           precedence: ["email", "username", "phone_number"],
           attributes: {
@@ -479,7 +545,7 @@ class Auth0Service {
         },
         enabled_clients: [auth0Config.clientId],
         is_domain_connection: false,
-        realms: [tenantData.slug],
+        realms: [realm],
         metadata: {
           tenant_slug: tenantData.slug,
           tenant_name: tenantData.tenantName,
@@ -516,6 +582,7 @@ class Auth0Service {
         data: {
           connectionId: connectionData.id,
           connectionName: connectionData.name,
+          dbConnectionName:connectionName
         },
       };
     } catch (error) {
@@ -567,13 +634,12 @@ class Auth0Service {
     organizationId,
     tenantData,
     token,
-    connectionId
+    connectionId,
+    dbConnectionName
   ) {
     try {
       // Use the actual connection ID that was created, not the name
-      const connectionName = `${tenantData.slug.toLowerCase()}-${
-        tenantData.email.split("@")[0]
-      }-connection`;
+      const connectionName = dbConnectionName
       console.log("Creating admin user with connection:", connectionName);
       console.log("Using connection ID:", connectionId);
 
@@ -614,7 +680,7 @@ class Auth0Service {
       }
 
       const userData = await userResponse.json();
-      console.log("Admin user created:", userData.user_id);
+      console.log("Admin user created:", userData);
 
       // Add user to organization as admin
       const orgMembershipResponse = await fetch(
@@ -651,6 +717,7 @@ class Auth0Service {
           userId: userData.user_id,
           email: userData.email,
           userName: userData.name,
+          picture: userData.picture,
         },
       };
     } catch (error) {
@@ -692,6 +759,22 @@ class Auth0Service {
     } catch (err) {
       console.error("❌ Error adding user to tenant:", err.message);
       throw err;
+    }
+  }
+  async getOrganizationDetails(tenantId) {
+    try {
+      const tenant = await Tenant.findById(tenantId);
+      if (!tenant) {
+        throw new Error("Tenant or Auth0 organization ID not found");
+      }
+
+      return {
+        success: true,
+        data: tenant.auth0,
+      };
+    } catch (error) {
+      logger.error("Failed to get organization details:", error);
+      throw new Error("Failed to get organization details");
     }
   }
 }
