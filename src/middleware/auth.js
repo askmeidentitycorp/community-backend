@@ -130,6 +130,8 @@ export const validatePlatformToken = async (req, res, next) => {
       sessionId: session._id,
       roles,
       permissions,
+      userName: decoded.name,
+      userEmail: decoded.email,
     };
     logger.info('Middleware: validatePlatformToken success', { userId: decoded?.userId });
     
