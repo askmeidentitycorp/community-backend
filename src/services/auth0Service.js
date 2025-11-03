@@ -493,64 +493,68 @@ class Auth0Service {
       const realm = `${tenantData.slug.toLowerCase()}-${Date.now()}`;
 
       const payload = {
-        name: connectionName,
-        display_name: `${tenantData.tenantName} Database Connection`,
-        strategy: "auth0",
-        options: {
-          // Remove validation object since we're using attributes
-         allowSignup: true,
-         disable_signup: false,
-          non_persistent_attrs: [],
-          precedence: ["email", "username", "phone_number"],
-          attributes: {
-            email: {
-              identifier: { active: true },
-              profile_required: true,
-              verification_method: "link",
-              signup: {
-                status: "required",
-                verification: { active: true },
-              },
-            },
-            username: {
-              identifier: { active: false },
-              profile_required: false,
-              signup: {},
-            },
-            phone_number: {
-              identifier: { active: false },
-              profile_required: false,
-              signup: {},
-            },
-          },
-          authentication_methods: {
-            password: { enabled: true },
-            passkey: { enabled: false },
-          },
-          passwordPolicy: "good",
-          password_complexity_options: {
-            min_length: 8,
-          },
-          password_history: {
-            enable: true,
-            size: 5,
-          },
-          password_no_personal_info: {
-            enable: true,
-          },
-          api_enable_users: true,
-          basic_profile: true,
-          ext_profile: true,
-          disable_self_service_change_password: false,
+  name: connectionName,
+  display_name: `${tenantData.tenantName} Database Connection`,
+  strategy: "auth0",
+  options: {
+    allowSignup: true,
+    disable_signup: false,
+    non_persistent_attrs: [],
+    // remove phone_number from precedence
+    precedence: ["email", "username","phone_number"],
+
+    attributes: {
+      email: {
+        identifier: { active: true },
+        profile_required: true,
+        verification_method: "link",
+        signup: {
+          status: "required",
+          verification: { active: true },
         },
-        enabled_clients: [auth0Config.clientId],
-        is_domain_connection: false,
-        realms: [realm],
-        metadata: {
-          tenant_slug: tenantData.slug,
-          tenant_name: tenantData.tenantName,
-        },
-      };
+      },
+      username: {
+        identifier: { active: false },
+        profile_required: false,
+        signup: {},
+      },
+      // completely remove or comment out this section 👇
+      phone_number: {
+        identifier: { active: false },
+        profile_required: false,
+        signup: {},
+      },
+    },
+
+    authentication_methods: {
+      password: { enabled: true },
+      passkey: { enabled: false },
+    },
+    passwordPolicy: "good",
+    password_complexity_options: {
+      min_length: 8,
+    },
+    password_history: {
+      enable: true,
+      size: 5,
+    },
+    password_no_personal_info: {
+      enable: true,
+    },
+    api_enable_users: true,
+    basic_profile: true,
+    ext_profile: true,
+    disable_self_service_change_password: false,
+  },
+  enabled_clients: [auth0Config.clientId],
+  is_domain_connection: false,
+  realms: [realm],
+  metadata: {
+    tenant_slug: tenantData.slug,
+    tenant_name: tenantData.tenantName,
+  },
+};
+
 
       console.log("Connection Payload:", JSON.stringify(payload, null, 2));
 

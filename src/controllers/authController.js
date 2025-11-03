@@ -212,7 +212,7 @@ class AuthController {
       const picture = verified.picture || ''; // Auth0 profile picture URL
 
       // Get or create user
-      let user = await User.findOne({ auth0Id });
+      let user = await User.findOne({ email });
       let tenantUserLinkId = null;
       
       if (!user) {
@@ -339,6 +339,7 @@ class AuthController {
       });
     
     } catch (error) {
+      console.error('Auth0: code-exchange error', error);
       logger.error('Auth0: code-exchange error', { error: error?.message });
       next(error);
     }
