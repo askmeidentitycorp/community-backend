@@ -214,7 +214,7 @@ class AuthController {
       // Get or create user
       let user = await User.findOne({ email });
       let tenantUserLinkId = null;
-      
+      console.log('tenantId', tenantId);
       if (!user) {
         user = new User({
           auth0Id,
@@ -285,7 +285,13 @@ class AuthController {
             tenantUserLinkId = tenantUserLink._id;
             logger.info('Auth0: found existing tenant user link', { tenantUserLinkId });
           } else {
-            logger.warn('Auth0: no tenant user link found for existing user', { userId: user._id.toString(), tenantId });
+            logger.warn('Auth0: no tenant user link found for existing user creating new tenantUserLink', { userId: user._id.toString(), tenantId });
+             const result = await auth0Service.addUserToTenant(tenantId.toString(), user._id.toString(), 'member')
+             tenantUserLinkId = result._id
+            if(!result.success){
+              logger.error('Auth0: failed to add user to tenant', { userId: user._id.toString(), reason: result.message });
+              throw new AppError(result.message, 500, 'TENANT_USER_ADDITION_FAILED');
+            }
           }
         } else {
           logger.warn('Auth0: tenantId not provided for existing user login', { userId: user._id.toString() });

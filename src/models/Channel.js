@@ -9,6 +9,11 @@ const ChannelSchema = new Schema(
       required: true,
       trim: true,
     },
+    tenantId: {
+      type: String,
+      required: true,
+      index: true,
+    },
     description: {
       type: String,
       trim: true,

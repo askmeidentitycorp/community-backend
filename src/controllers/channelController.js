@@ -17,7 +17,7 @@ export const createChannel = async (req, res, next) => {
       const exists = await Channel.findOne({ isDefaultGeneral: true })
       if (exists) return next(new AppError('General channel already exists', 400, 'ALREADY_EXISTS'))
     }
-    const channel = await chimeMessagingService.createChannel({ name, description, isPrivate, createdByUser: creator, isDefaultGeneral })
+    const channel = await chimeMessagingService.createChannel({ name, description, isPrivate, createdByUser: creator, isDefaultGeneral, userDetails: req.auth })
     return res.status(201).json({ channel })
   } catch (err) {
     return next(err)
@@ -431,7 +431,8 @@ export const mirrorMessage = async (req, res, next) => {
 export const getChannel = async (req, res, next) => {
   try {
     const { channelId } = req.params
-    const channel = await Channel.findById(channelId)
+    const tenantId = req.auth?.tenantId || ''
+    const channel = await Channel.findOne({ _id: channelId, tenantId })
     if (!channel) return next(new AppError('Channel not found', 404, 'NOT_FOUND'))
     return res.json({ channel })
   } catch (err) {

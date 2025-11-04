@@ -281,7 +281,7 @@ async function syncChannelFromChime({ chimeChannel, createdByUser }) {
   return channel
 }
 
-async function createChannel({ name, description, isPrivate, createdByUser, isDefaultGeneral = false }) {
+async function createChannel({ name, description, isPrivate, createdByUser, isDefaultGeneral = false,userDetails = {} }) {
   logger.info('[Chime] createChannel start', { name, isDefaultGeneral, createdByUser: createdByUser._id })
   if (!APP_INSTANCE_ARN) throw new Error('CHIME_APP_INSTANCE_ARN not configured')
   
@@ -319,6 +319,7 @@ async function createChannel({ name, description, isPrivate, createdByUser, isDe
     members: [createdByUser._id],
     admins: [createdByUser._id],
     createdBy: createdByUser._id,
+    tenantId: userDetails.tenantId || '',
     isDefaultGeneral: !!isDefaultGeneral,
     chime: { channelArn, mode: 'RESTRICTED', privacy, type: 'channel' }
   })
