@@ -12,6 +12,7 @@
   "dependencies": {
     "@aws-sdk/client-chime-sdk-identity": "^3.896.0",
     "@aws-sdk/client-chime-sdk-messaging": "^3.896.0",
+    "@aws-sdk/client-iam": "^3.922.0",
     "@aws-sdk/client-s3": "^3.896.0",
     "@aws-sdk/client-sts": "^3.896.0",
     "axios": "^1.4.0",

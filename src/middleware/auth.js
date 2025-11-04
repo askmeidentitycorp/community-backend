@@ -133,6 +133,9 @@ export const validatePlatformToken = async (req, res, next) => {
       permissions,
       tenantUserLinkId: decoded.tenant_user_link_id??'',// add this for indivdual chat or discuession
       tenantId: decoded.tenant_id??'',// used for the channels
+      chimebearer: decoded.ChimeBerear || '',
+      chimeAppInstanceArn: decoded.ChimeAppInstanceArn || '',
+      chimeBackendAdminRoleArn: decoded.ChimeBackendAdminRoleArn || '',
     };
     logger.info('Middleware: validatePlatformToken attached auth', { auth: req.auth });
     logger.info('Middleware: validatePlatformToken success', { userId: decoded?.userId });

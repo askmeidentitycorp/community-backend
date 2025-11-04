@@ -12,6 +12,7 @@ import crypto from 'crypto';
 import axios from 'axios';
 import jwksRsa from 'jwks-rsa';
 import jwt from 'jsonwebtoken';
+import { Tenant } from '../models/tenantModel.js';
 
 /**
  * Controller for authentication endpoints
@@ -311,6 +312,8 @@ class AuthController {
         userAgent: req.headers['user-agent'],
         ip: req.ip,
       };
+      
+      const tenantDetail = await Tenant.findById(tenantId);
 
       const { accessToken, refreshToken, sessionId } = await tokenService.createSession(
         user._id.toString(),
@@ -319,7 +322,8 @@ class AuthController {
         auth0Id,
         refresh_token,
         tenantId,
-        tenantUserLinkId
+        tenantUserLinkId,
+        { CHIME_APP_INSTANCE_ARN: tenantDetail?.ChimeAppInstanceArn ?? "",CHIME_BEARER: tenantDetail?.ChimeBerear ?? "",CHIME_BACKEND_ADMIN_ROLE_ARN: tenantDetail?.ChimeBackendAdminRoleArn ?? "" }
       );
       logger.info('Auth0: platform tokens issued (code-exchange)', {
         userId: user._id.toString(),

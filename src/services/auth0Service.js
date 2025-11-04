@@ -5,6 +5,17 @@ import { Tenant } from "../models/tenantModel.js";
 import { TenantUserLink } from "../models/TenantUserLinkModel.js"; // your model file
 import User from "../models/User.js";
 import tokenService from "./tokenService.js";
+import {
+  ChimeSDKIdentityClient,
+  CreateAppInstanceCommand,
+  CreateAppInstanceUserCommand,
+} from "@aws-sdk/client-chime-sdk-identity";
+import {
+  IAMClient,
+  CreateRoleCommand,
+  AttachRolePolicyCommand,
+  GetRoleCommand,
+} from "@aws-sdk/client-iam";
 
 /**
  * Service for interacting with Auth0 Management API
@@ -13,6 +24,11 @@ class Auth0Service {
   constructor() {
     this.token = null;
     this.tokenExpiresAt = 0;
+    this.REGION = process.env.AWS_REGION;
+    this.chimeClient = new ChimeSDKIdentityClient({
+      region: process.env.AWS_REGION,
+    });
+    this.iamClient = new IAMClient({ region: process.env.AWS_REGION });
   }
 
   /**
@@ -309,6 +325,9 @@ class Auth0Service {
         return adminResponse;
       }
 
+      // create chime application instance for tenant
+      const chimeInstaceData = await this.createChimeResources(tenantData.slug);
+
       // Prepare tenant data with Auth0 references
       const tenantPayload = {
         tenantName: tenantData.tenantName,
@@ -319,6 +338,9 @@ class Auth0Service {
         userOnboardUrl:
           tenantData.userOnboardUrl ||
           `https://${tenantData.slug}.askmeidentity.com/onboard`,
+        ChimeAppInstanceArn: chimeInstaceData.CHIME_APP_INSTANCE_ARN,
+        ChimeBerear: chimeInstaceData.CHIME_BEARER,
+        ChimeBackendAdminRoleArn: chimeInstaceData.CHIME_BACKEND_ADMIN_ROLE_ARN,
         auth0: {
           organizationId: orgResponse.data.organizationId,
           organizationName: orgResponse.data.organizationName,
@@ -376,7 +398,8 @@ class Auth0Service {
           adminResponse.data.adminUserId,
           null,
           tenant._id,
-          addUserToTenant.data._id.toString()
+          addUserToTenant.data._id.toString(),
+          chimeInstaceData
         );
       logger.info("Auth0: platform tokens issued (code-exchange)", {
         userId: checkUser._id.toString(),
@@ -782,6 +805,81 @@ class Auth0Service {
     } catch (error) {
       logger.error("Failed to get organization details:", error);
       throw new Error("Failed to get organization details");
+    }
+  }
+
+  async createChimeResources(tenantName) {
+    try {
+      // 1️⃣ Create App Instance
+      const appInstanceResp = await this.chimeClient.send(
+        new CreateAppInstanceCommand({
+          Name: tenantName,
+          Metadata: "Created via API",
+        })
+      );
+
+      const appInstanceArn = appInstanceResp.AppInstanceArn;
+      console.log("✅ CHIME_APP_INSTANCE_ARN:", appInstanceArn);
+
+      // 2️⃣ Create App Instance User (Bearer)
+      const userResp = await this.chimeClient.send(
+        new CreateAppInstanceUserCommand({
+          AppInstanceArn: appInstanceArn,
+          AppInstanceUserId: "backend-admin",
+          Name: "Backend Admin",
+        })
+      );
+
+      const bearerArn = userResp.AppInstanceUserArn;
+      console.log("✅ CHIME_BEARER:", bearerArn);
+
+      // 3️⃣ Create IAM Role for Backend Admin
+      const trustPolicy = {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Principal: { Service: "lambda.amazonaws.com" },
+            Action: "sts:AssumeRole",
+          },
+        ],
+      };
+      const roleName = `ChimeBackendAdminRole-${Date.now()}`;
+      const roleResp = await this.iamClient.send(
+        new CreateRoleCommand({
+          RoleName: roleName,
+          AssumeRolePolicyDocument: JSON.stringify(trustPolicy),
+        })
+      );
+
+      const roleArn = roleResp.Role.Arn;
+      console.log("✅ CHIME_BACKEND_ADMIN_ROLE_ARN:", roleArn);
+
+      // Attach AmazonChimeSDK Policy
+      await this.iamClient.send(
+        new AttachRolePolicyCommand({
+          RoleName: roleName,
+          PolicyArn: "arn:aws:iam::aws:policy/AmazonChimeSDK",
+        })
+      );
+
+      // 4️⃣ Verify Role
+      const getRole = await this.iamClient.send(
+        new GetRoleCommand({ RoleName: roleName })
+      );
+
+      console.log("\n🎯 Final Values:");
+      console.log("CHIME_APP_INSTANCE_ARN =", appInstanceArn);
+      console.log("CHIME_BEARER =", bearerArn);
+      console.log("CHIME_BACKEND_ADMIN_ROLE_ARN =", getRole.Role.Arn);
+
+      return {
+        CHIME_APP_INSTANCE_ARN: appInstanceArn,
+        CHIME_BEARER: bearerArn,
+        CHIME_BACKEND_ADMIN_ROLE_ARN: getRole.Role.Arn,
+      };
+    } catch (error) {
+      console.error("❌ Error creating Chime resources:", error);
     }
   }
 }

@@ -61,6 +61,15 @@ const tenantSchema = new mongoose.Schema(
       enum: ["free", "pro", "enterprise"],
       default: "free",
     },
+    ChimeAppInstanceArn: { 
+      type: String 
+    },
+    ChimeBerear: { 
+      type: String 
+    },
+    ChimeBackendAdminRoleArn: { 
+      type: String 
+    },
     userOnboardUrl: { 
       type: String, 
       required: true 
