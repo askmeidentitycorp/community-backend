@@ -493,6 +493,7 @@ class UserController {
       const wasSuperAdmin = previousRoles.includes('super_admin');
       const willBeSuperAdmin = roles.includes('super_admin');
       const isBecomingSuperAdmin = willBeSuperAdmin && !wasSuperAdmin;
+      const isLosingSuperAdmin = wasSuperAdmin && !willBeSuperAdmin;
 
       // Replace roles entirely (assignRoles sets the complete role list)
       user.roles = roles;
@@ -519,6 +520,17 @@ class UserController {
             error: chimeError.message 
           });
         }
+      }
+
+      // If the user is losing super_admin role, they've already been removed from AppInstanceAdmin
+      // (We don't actively demote them, as that would require additional Chime API calls)
+      if (isLosingSuperAdmin) {
+        logger.info('User lost super_admin role', { 
+          userId: user._id, 
+          userName: user.name,
+          previousRoles,
+          newRoles: roles 
+        });
       }
 
       return res.status(200).json({
