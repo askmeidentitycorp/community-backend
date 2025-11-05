@@ -175,6 +175,11 @@ export const tryValidatePlatformToken = (req, res, next) => {
       userId: decoded.userId || decoded.user_id,
       roles,
       permissions,
+       tenantUserLinkId: decoded.tenant_user_link_id??'',// add this for indivdual chat or discuession
+      tenantId: decoded.tenant_id??'',// used for the channels
+      chimebearer: decoded.ChimeBerear || '',
+      chimeAppInstanceArn: decoded.ChimeAppInstanceArn || '',
+      chimeBackendAdminRoleArn: decoded.ChimeBackendAdminRoleArn || '',
     };
     return next();
   } catch (error) {

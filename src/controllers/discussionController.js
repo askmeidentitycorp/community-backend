@@ -27,6 +27,8 @@ class DiscussionController {
         title,
         content,
         authorId: req.auth.userId,
+        tenantUserId: req.auth.tenantUserLinkId,
+        tenantId: req.auth.tenantId,
         author: author && typeof author === 'object' ? {
           id: author.id,
           name: author.name,
@@ -47,6 +49,7 @@ class DiscussionController {
           title: discussion.title,
           content: discussion.content,
           tags: discussion.tags,
+          tenantId: discussion.tenantId,
           author: discussion.author ? {
             id: discussion.author.id,
             name: discussion.author.name,
@@ -71,7 +74,9 @@ class DiscussionController {
     try {
       const { limit = 20, offset = 0, channelId, tag, search } = req.query;
 
-      const query = {};
+      const query = {
+        tenantId: req.auth?.tenantId ,
+      };
       if (channelId) query.channelId = channelId;
       if (tag) query.tags = tag;
       if (search) query.title = { $regex: search, $options: 'i' };
