@@ -9,6 +9,7 @@ import {
   ChimeSDKIdentityClient,
   CreateAppInstanceCommand,
   CreateAppInstanceUserCommand,
+  CreateAppInstanceAdminCommand
 } from "@aws-sdk/client-chime-sdk-identity";
 import {
   IAMClient,
@@ -832,6 +833,13 @@ class Auth0Service {
 
       const bearerArn = userResp.AppInstanceUserArn;
       console.log("✅ CHIME_BEARER:", bearerArn);
+     // assign user aap instance role 
+      const command = await new CreateAppInstanceAdminCommand({
+      AppInstanceAdminArn: bearerArn,
+      AppInstanceArn: appInstanceArn,
+    });
+
+    console.log("Creating App Instance Admin...",command.input.AppInstanceAdminArn);
 
       // 3️⃣ Create IAM Role for Backend Admin
       const trustPolicy = {
@@ -875,7 +883,7 @@ class Auth0Service {
 
       return {
         CHIME_APP_INSTANCE_ARN: appInstanceArn,
-        CHIME_BEARER: bearerArn,
+        CHIME_BEARER: command.input.AppInstanceAdminArn,
         CHIME_BACKEND_ADMIN_ROLE_ARN: getRole.Role.Arn,
       };
     } catch (error) {
