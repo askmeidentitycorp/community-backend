@@ -33,7 +33,7 @@ export const addMember = async (req, res, next) => {
     if (!user) return next(new AppError('User not found', 404, 'NOT_FOUND'))
     const operator = await User.findById(req.auth.userId)
     if (!operator) return next(new AppError('User not found', 404, 'NOT_FOUND'))
-    const channel = await chimeMessagingService.addMember({ channelId, user, operatorUser: operator })
+    const channel = await chimeMessagingService.addMember({ channelId, user, operatorUser: operator, userDetails: req.auth })
     return res.json({ channel })
   } catch (err) {
     return next(err)
@@ -113,17 +113,23 @@ export const grantChannelModerator = async (req, res, next) => {
     if (!channel) return next(new AppError('Channel not found', 404, 'NOT_FOUND'))
     const doc = await ChannelRoleAssignment.findOneAndUpdate(
       { channelId, userId, role: 'moderator' },
-      { $setOnInsert: { createdBy: req.auth?.userId } },
+       {
+        $setOnInsert: {
+          createdBy: req.auth?.userId,
+          tenantId: req.auth?.tenantId,
+          tenantUserLinkId: req.auth?.tenantUserLinkId,
+          }
+        },
       { new: true, upsert: true }
     )
     // Ensure membership
     const isMember = channel.members.some(id => String(id) === String(user._id))
     if (!isMember) {
-      await chimeMessagingService.addMember({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined })
+      await chimeMessagingService.addMember({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined, userDetails: req.auth })
     }
     // Also grant moderator in Chime
     try {
-      await chimeMessagingService.grantChannelModerator({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined })
+      await chimeMessagingService.grantChannelModerator({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined, userDetails: req.auth })
     } catch {}
     return res.status(201).json({ success: true, assignment: { channelId, userId, role: 'moderator' } })
   } catch (err) {
@@ -140,7 +146,7 @@ export const revokeChannelModerator = async (req, res, next) => {
     try {
       const user = await User.findById(userId)
       if (user) {
-        await chimeMessagingService.revokeChannelModerator({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined })
+        await chimeMessagingService.revokeChannelModerator({ channelId, user, operatorUser: req.auth?.userId ? await User.findById(req.auth.userId) : undefined, userDetails: req.auth })
       }
     } catch {}
     return res.json({ success: true })
@@ -168,7 +174,7 @@ export const ensureGeneralAndJoin = async (req, res, next) => {
     
     if (!channel) {
       console.log('[Controller] Creating general channel')
-      channel = await chimeMessagingService.createChannel({ name: 'general', description: 'General channel for everyone', isPrivate: false, createdByUser: user, isDefaultGeneral: true })
+      channel = await chimeMessagingService.createChannel({ name: 'general', description: 'General channel for everyone', isPrivate: false, createdByUser: user, isDefaultGeneral: true, userDetails: req.auth })
       console.log('[Controller] General channel created', { channelId: channel._id })
     }
     
@@ -177,13 +183,13 @@ export const ensureGeneralAndJoin = async (req, res, next) => {
     
     if (!isMember) {
       console.log('[Controller] Adding user to general channel')
-      channel = await chimeMessagingService.addMember({ channelId: channel._id, user })
+      channel = await chimeMessagingService.addMember({ channelId: channel._id, user, userDetails: req.auth })
       console.log('[Controller] User added to general channel', { channelId: channel._id })
     } else {
       console.log('[Controller] User already member of general channel')
       // Only ensure Chime membership if not already a member
       console.log('[Controller] Ensuring Chime membership')
-      await chimeMessagingService.ensureChimeMembership({ channelId: channel._id, user })
+      await chimeMessagingService.ensureChimeMembership({ channelId: channel._id, user, userDetails: req.auth })
     }
     
     return res.json({ channel })
@@ -208,7 +214,8 @@ export const listMessages = async (req, res, next) => {
       channelId, 
       nextToken, 
       pageSize: pageSize ? Number(pageSize) : undefined,
-      user 
+      user,
+      userDetails: req.auth 
     })
     console.log('[Controller] listMessages success', { itemCount: result.items?.length || 0 })
     return res.json(result)
@@ -226,7 +233,7 @@ export const sendMessage = async (req, res, next) => {
     if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
     const author = await User.findById(req.auth.userId)
     if (!author) return next(new AppError('User not found', 404, 'NOT_FOUND'))
-    const result = await chimeMessagingService.sendMessage({ channelId, author, content })
+    const result = await chimeMessagingService.sendMessage({ channelId, author, content, userDetails: req.auth })
     return res.status(201).json(result)
   } catch (err) {
     return next(err)
@@ -239,7 +246,7 @@ export const deleteChannel = async (req, res, next) => {
     if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
     const operator = await User.findById(req.auth.userId)
     if (!operator) return next(new AppError('User not found', 404, 'NOT_FOUND'))
-    const result = await chimeMessagingService.deleteChannel({ channelId, operatorUser: operator })
+    const result = await chimeMessagingService.deleteChannel({ channelId, operatorUser: operator, userDetails: req.auth })
     return res.json(result)
   } catch (err) {
     return next(err)
@@ -254,7 +261,7 @@ export const deleteChannelMessage = async (req, res, next) => {
     if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
     const operator = await User.findById(req.auth.userId)
     if (!operator) return next(new AppError('User not found', 404, 'NOT_FOUND'))
-    const result = await chimeMessagingService.deleteChannelMessage({ channelId, messageId, operatorUser: operator })
+    const result = await chimeMessagingService.deleteChannelMessage({ channelId, messageId, operatorUser: operator, userDetails: req.auth })
     return res.json(result)
   } catch (err) {
     return next(err)
@@ -334,7 +341,7 @@ export const redactChannelMessage = async (req, res, next) => {
       isAuthor
     })
     
-    const result = await chimeMessagingService.redactChannelMessage({ channelId, messageId, operatorUser: operator })
+    const result = await chimeMessagingService.redactChannelMessage({ channelId, messageId, operatorUser: operator, userDetails: req.auth })
     return res.json(result)
   } catch (err) {
     return next(err)
@@ -366,6 +373,8 @@ export const mirrorMessage = async (req, res, next) => {
     const doc = {
       channelId: channel._id,
       authorId: author._id,
+      tenantId: req.auth?.tenantId || '',
+      tenantUserLinkId: req.auth?.tenantUserLinkId || '',
       content,
       isEdited: false,
       externalRef: { provider: 'chime', messageId, channelArn: channel.chime.channelArn }
@@ -455,7 +464,7 @@ export const ensureGeneralChannelOnly = async (req, res, next) => {
     
     if (!channel) {
       console.log('[Controller] Creating general channel')
-      channel = await chimeMessagingService.createChannel({ name: 'general', description: 'General channel for everyone', isPrivate: false, createdByUser: user, isDefaultGeneral: true })
+      channel = await chimeMessagingService.createChannel({ name: 'general', description: 'General channel for everyone', isPrivate: false, createdByUser: user, isDefaultGeneral: true, userDetails: req.auth })
       console.log('[Controller] General channel created', { channelId: channel._id })
     }
     
@@ -464,13 +473,13 @@ export const ensureGeneralChannelOnly = async (req, res, next) => {
     
     if (!isMember) {
       console.log('[Controller] Adding user to general channel')
-      channel = await chimeMessagingService.addMember({ channelId: channel._id, user })
+      channel = await chimeMessagingService.addMember({ channelId: channel._id, user, userDetails: req.auth })
       console.log('[Controller] User added to general channel', { channelId: channel._id })
     } else {
       console.log('[Controller] User already member of general channel')
       // Still ensure Chime membership even if MongoDB membership exists
       console.log('[Controller] Ensuring Chime membership')
-      await chimeMessagingService.ensureChimeMembership({ channelId: channel._id, user })
+      await chimeMessagingService.ensureChimeMembership({ channelId: channel._id, user, userDetails: req.auth })
     }
     
     console.log('[Controller] ensureGeneralChannelOnly completed successfully')

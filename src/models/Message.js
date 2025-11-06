@@ -14,6 +14,16 @@ const MessageSchema = new Schema(
       ref: 'User',
       required: true,
     },
+    tenantId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Tenant',
+      required: true,
+    },
+    tenantUserLinkId: {
+      type: Schema.Types.ObjectId,
+      ref: 'TenantUserLink',
+      required: true,
+    },
     content: {
       type: String,
       required: true,

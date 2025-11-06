@@ -4,7 +4,8 @@ import { logger } from '../utils/logger.js';
 const connectDB = async () => {
   try {
     const tenantId = process.env.TENANT_ID || 'tenant1';
-    const databaseName = process.env.MONGODB_DATABASE || `${tenantId}_discussion`;
+    // const databaseName = process.env.MONGODB_DATABASE || `${tenantId}_discussion`;
+    const databaseName = 'tenant_community_db_ami';
     const mongoURI = process.env.MONGODB_URI || '';
     console.log('Connecting to MongoDB with URI:', mongoURI, 'and database:', databaseName);
 

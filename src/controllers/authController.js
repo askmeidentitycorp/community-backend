@@ -22,8 +22,21 @@ class AuthController {
     this.auth0Service = auth0Service;
   }
   // Ensure default general channel exists and user is a member (best-effort)
-  static async ensureGeneralForUser(user) {
+  static async ensureGeneralForUser(user, chimeDetails = {}) {
     try {
+      // Prepare userDetails for Chime service calls
+      const userDetails = {
+        chimeAppInstanceArn: chimeDetails.CHIME_APP_INSTANCE_ARN || process.env.CHIME_APP_INSTANCE_ARN,
+        chimebearer: chimeDetails.CHIME_BEARER || process.env.CHIME_BEARER,
+        tenantId: chimeDetails.tenantId || null
+      };
+
+      logger.info('Auth: ensureGeneralForUser with Chime details', {
+        hasAppInstanceArn: !!userDetails.chimeAppInstanceArn,
+        hasBearer: !!userDetails.chimebearer,
+        tenantId: userDetails.tenantId
+      });
+
       let channel = await Channel.findOne({ isDefaultGeneral: true })
       if (!channel) {
         channel = await chimeMessagingService.createChannel({
@@ -31,14 +44,23 @@ class AuthController {
           description: 'General channel for everyone',
           isPrivate: false,
           createdByUser: user,
-          isDefaultGeneral: true
+          isDefaultGeneral: true,
+          userDetails: userDetails
         })
       }
       const isMember = channel.members.some(id => String(id) === String(user._id))
       if (!isMember) {
-        await chimeMessagingService.addMember({ channelId: channel._id, user })
+        await chimeMessagingService.addMember({ 
+          channelId: channel._id, 
+          user, 
+          userDetails
+        })
       } else {
-        await chimeMessagingService.ensureChimeMembership({ channelId: channel._id, user })
+        await chimeMessagingService.ensureChimeMembership({ 
+          channelId: channel._id, 
+          user, 
+          userDetails 
+        })
       }
     } catch (err) {
       logger.warn('Auth: ensureGeneralForUser failed (continuing)', { error: err?.message })
@@ -298,22 +320,31 @@ class AuthController {
           logger.warn('Auth0: tenantId not provided for existing user login', { userId: user._id.toString() });
         }
       }
-      // ensure general channel and membership on login
-      await AuthController.ensureGeneralForUser(user)
+      
+      // Fetch tenant details for Chime configuration
+      let tenantDetail = null;
+      if (tenantId) {
+        tenantDetail = await Tenant.findById(tenantId);
+        if (!tenantDetail) {
+          logger.warn('Auth0: tenant not found', { tenantId });
+        }
+      }
+      
+      // ensure general channel and membership on login with Chime details
+      await AuthController.ensureGeneralForUser(user, {
+        CHIME_APP_INSTANCE_ARN: tenantDetail?.ChimeAppInstanceArn,
+        tenantId: tenantId
+      })
 
       if (!user.isActive || user.isDeleted) {
         throw new AppError('User account is not active', 403, 'INACTIVE_ACCOUNT');
       }
-      //: ensure general channel and membership on login
-      await AuthController.ensureGeneralForUser(user)
 
       // Issue platform tokens
       const deviceInfo = {
         userAgent: req.headers['user-agent'],
         ip: req.ip,
       };
-      
-      const tenantDetail = await Tenant.findById(tenantId);
 
       const { accessToken, refreshToken, sessionId } = await tokenService.createSession(
         user._id.toString(),
@@ -936,6 +967,7 @@ class AuthController {
       if (!tenantId) {
         throw new AppError('tenantId query parameter is required', 400, 'TENANT_ID_REQUIRED');
       }
+      console.log('Auth: getTenantOrganizations tenantId', tenantId);
      const result = await auth0Service.getOrganizationDetails(tenantId);
       
       if(!result.success){

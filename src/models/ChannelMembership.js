@@ -14,6 +14,16 @@ const ChannelMembershipSchema = new Schema(
       ref: 'User',
       required: true,
     },
+    tenantId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Tenant',
+      required: true,
+    },
+    tenantUserLinkId: {
+      type: Schema.Types.ObjectId,
+      ref: 'TenantUserLink',
+      required: true,
+    },
     unreadCount: {
       type: Number,
       default: 0,

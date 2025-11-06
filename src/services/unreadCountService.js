@@ -212,7 +212,7 @@ class UnreadCountService {
    * @param {Object} options - Additional options
    * @returns {Object} Created or existing membership
    */
-  static async ensureUnreadTracking(channelId, userId, options = {}) {
+  static async ensureUnreadTracking(channelId, userId, tenantId, tenantUserLinkId, options = {}) {
     try {
       console.log('[UnreadCountService] ensureUnreadTracking start', { channelId, userId });
 
@@ -237,6 +237,8 @@ class UnreadCountService {
       const membership = await ChannelMembership.create({
         channelId: new mongoose.Types.ObjectId(channelId),
         userId: new mongoose.Types.ObjectId(userId),
+        tenantId: new mongoose.Types.ObjectId(tenantId),
+        tenantUserLinkId: new mongoose.Types.ObjectId(tenantUserLinkId),
         unreadCount: 0, // Start with 0 unread messages
         lastReadAt: new Date(), // Mark as read when joining
         lastMessageAt: lastMessageAt,

@@ -124,16 +124,17 @@ async function ensureAppInstanceUser(user,userDetails = {}) {
   }
 }
 
-async function promoteToAppInstanceAdmin(user) {
+async function promoteToAppInstanceAdmin(user, userDetails = {}) {
   logger.info("[Chime] promoteToAppInstanceAdmin start", {
     userId: user._id,
     userName: user.name,
   });
+  const APP_INSTANCE_ARN = userDetails.chimeAppInstanceArn || process.env.CHIME_APP_INSTANCE_ARN;
   if (!user) throw new Error("User is required");
 
   try {
     // Ensure the AppInstanceUser exists first
-    const appInstanceUserArn = await ensureAppInstanceUser(user);
+    const appInstanceUserArn = await ensureAppInstanceUser(user, userDetails);
 
     // Promote the user to AppInstanceAdmin
     logger.info("[Chime] Promoting user to AppInstanceAdmin", {
@@ -409,7 +410,7 @@ async function createChannel({
   }
 
   // Channel doesn't exist in Chime, create it
-  const creatorArn = await ensureAppInstanceUser(createdByUser);
+  const creatorArn = await ensureAppInstanceUser(createdByUser,userDetails);
   const privacy = isPrivate ? "PRIVATE" : "PUBLIC";
   logger.info("[Chime] Creating new Chime channel", {
     name,
@@ -423,7 +424,7 @@ async function createChannel({
       Name: name,
       Mode: "RESTRICTED",
       Privacy: privacy,
-      ChimeBearer: userDetails.chimebearer ,
+      ChimeBearer: creatorArn ,
       Metadata: description
         ? JSON.stringify({ description, isDefaultGeneral })
         : isDefaultGeneral
@@ -438,8 +439,8 @@ async function createChannel({
     name,
     description,
     isPrivate: !!isPrivate,
-    members: [userDetails.tenantUserLinkId ],
-    admins: [userDetails.tenantUserLinkId ],
+    members: [ createdByUser._id],
+    admins: [ createdByUser._id ],
     createdBy: createdByUser._id,
     tenantId: userDetails.tenantId || "",
     isDefaultGeneral: !!isDefaultGeneral,
@@ -455,10 +456,13 @@ async function createChannel({
       ChimeBearer: userDetails.chimebearer,
     })
   );
+
   logger.info("[Chime] Creator added as channel member", {
     channelArn,
     creatorArn,
   });
+
+
 
   // Promote creator to channel moderator in Chime
   try {
@@ -482,7 +486,7 @@ async function createChannel({
   return channel;
 }
 
-async function addMember({ channelId, user, operatorUser }) {
+async function addMember({ channelId, user, operatorUser, userDetails = {} }) {
   // Default operator to the same user if not explicitly provided
   const actingUser = operatorUser || user;
   logger.info("[Chime] addMember start", {
@@ -499,8 +503,8 @@ async function addMember({ channelId, user, operatorUser }) {
     });
     throw new Error("Channel not found or not mapped to Chime");
   }
-  const memberArn = await ensureAppInstanceUser(user);
-  const operatorArn = await ensureAppInstanceUser(actingUser);
+  const memberArn = await ensureAppInstanceUser(user, userDetails);
+  const operatorArn = await ensureAppInstanceUser(actingUser, userDetails);
   logger.info("[Chime] Adding member to Chime channel", {
     channelArn: channel.chime.channelArn,
     memberArn,
@@ -581,7 +585,9 @@ async function addMember({ channelId, user, operatorUser }) {
         .default;
       await UnreadCountService.ensureUnreadTracking(
         channelId,
-        user._id.toString()
+        user._id.toString(),
+        userDetails.tenantId,
+        userDetails.tenantUserLinkId
       );
       logger.info("[Chime] Unread count tracking ensured for new member", {
         channelId,
@@ -604,7 +610,7 @@ async function addMember({ channelId, user, operatorUser }) {
   return channel;
 }
 
-async function ensureChimeMembership({ channelId, user }) {
+async function ensureChimeMembership({ channelId, user, userDetails = {} }) {
   logger.info("[Chime] ensureChimeMembership start", {
     channelId,
     userId: user._id,
@@ -618,7 +624,7 @@ async function ensureChimeMembership({ channelId, user }) {
     });
     throw new Error("Channel not found or not mapped to Chime");
   }
-  const userArn = await ensureAppInstanceUser(user);
+  const userArn = await ensureAppInstanceUser(user, userDetails);
   logger.info("[Chime] Ensuring Chime membership", {
     channelArn: channel.chime.channelArn,
     userArn,
@@ -655,18 +661,18 @@ async function ensureChimeMembership({ channelId, user }) {
   return channel;
 }
 
-async function sendMessage({ channelId, author, content }) {
+async function sendMessage({ channelId, author, content, userDetails = {} }) {
   const channel = await Channel.findById(channelId);
   if (!channel || !channel?.chime?.channelArn)
     throw new Error("Channel not found or not mapped to Chime");
-  const authorArn = await ensureAppInstanceUser(author);
+  const authorArn = await ensureAppInstanceUser(author, userDetails);
 
   // Ensure the user is a member of the Chime channel before sending a message
   logger.info(
     "[Chime] Ensuring user is member of channel before sending message",
     { channelId, userId: author._id }
   );
-  await addMember({ channelId, user: author });
+  await addMember({ channelId, user: author, userDetails });
 
   // Add a small delay to allow Chime membership to propagate
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -695,7 +701,7 @@ async function sendMessage({ channelId, author, content }) {
   return { message, chime: { messageId: res.MessageId } };
 }
 
-async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
+async function listMessages({ channelId, nextToken, pageSize = 50, user, userDetails = {} }) {
   logger.info("[Chime] listMessages start", { channelId, nextToken, pageSize });
   const channel = await Channel.findById(channelId);
   if (!channel || !channel?.chime?.channelArn) {
@@ -711,7 +717,7 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user }) {
   });
 
   // Get the user's AppInstanceUser ARN for ChimeBearer
-  const appInstanceUserArn = await ensureAppInstanceUser(user);
+  const appInstanceUserArn = await ensureAppInstanceUser(user, userDetails);
   logger.info("[Chime] Using AppInstanceUser ARN as ChimeBearer", {
     appInstanceUserArn,
   });
@@ -871,11 +877,11 @@ export default {
   ensureChimeMembership,
   sendMessage,
   listMessages,
-  async deleteChannel({ channelId, operatorUser }) {
+  async deleteChannel({ channelId, operatorUser, userDetails = {} }) {
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const operatorArn = await ensureAppInstanceUser(operatorUser);
+    const operatorArn = await ensureAppInstanceUser(operatorUser, userDetails);
     await adminMessagingClient.send(
       new DeleteChannelCommand({
         ChannelArn: channel.chime.channelArn,
@@ -886,11 +892,11 @@ export default {
     await Message.deleteMany({ channelId });
     return { deleted: true };
   },
-  async deleteChannelMessage({ channelId, messageId, operatorUser }) {
+  async deleteChannelMessage({ channelId, messageId, operatorUser, userDetails = {} }) {
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const operatorArn = await ensureAppInstanceUser(operatorUser);
+    const operatorArn = await ensureAppInstanceUser(operatorUser, userDetails);
     await adminMessagingClient.send(
       new DeleteChannelMessageCommand({
         ChannelArn: channel.chime.channelArn,
@@ -905,12 +911,12 @@ export default {
     });
     return { deleted: true };
   },
-  async grantChannelModerator({ channelId, user, operatorUser }) {
+  async grantChannelModerator({ channelId, user, operatorUser, userDetails = {} }) {
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const memberArn = await ensureAppInstanceUser(user);
-    const operatorArn = await ensureAppInstanceUser(operatorUser || user);
+    const memberArn = await ensureAppInstanceUser(user, userDetails);
+    const operatorArn = await ensureAppInstanceUser(operatorUser || user, userDetails);
     await adminMessagingClient.send(
       new CreateChannelModeratorCommand({
         ChannelArn: channel.chime.channelArn,
@@ -920,12 +926,12 @@ export default {
     );
     return { success: true };
   },
-  async revokeChannelModerator({ channelId, user, operatorUser }) {
+  async revokeChannelModerator({ channelId, user, operatorUser, userDetails = {} }) {
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const memberArn = await ensureAppInstanceUser(user);
-    const operatorArn = await ensureAppInstanceUser(operatorUser || user);
+    const memberArn = await ensureAppInstanceUser(user, userDetails);
+    const operatorArn = await ensureAppInstanceUser(operatorUser || user, userDetails);
     await adminMessagingClient.send(
       new DeleteChannelModeratorCommand({
         ChannelArn: channel.chime.channelArn,
@@ -935,11 +941,11 @@ export default {
     );
     return { success: true };
   },
-  async redactChannelMessage({ channelId, messageId, operatorUser }) {
+  async redactChannelMessage({ channelId, messageId, operatorUser, userDetails = {} }) {
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const operatorArn = await ensureAppInstanceUser(operatorUser);
+    const operatorArn = await ensureAppInstanceUser(operatorUser, userDetails);
     logger.info("[Chime] Redacting channel message", {
       channelId,
       messageId,

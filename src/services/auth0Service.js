@@ -4,7 +4,9 @@ import { logger } from "../utils/logger.js";
 import { Tenant } from "../models/tenantModel.js";
 import { TenantUserLink } from "../models/TenantUserLinkModel.js"; // your model file
 import User from "../models/User.js";
+import Channel from "../models/Channel.js";
 import tokenService from "./tokenService.js";
+import chimeMessagingService from "./chimeMessagingService.js";
 import {
   ChimeSDKIdentityClient,
   CreateAppInstanceCommand,
@@ -326,10 +328,7 @@ class Auth0Service {
         return adminResponse;
       }
 
-      // create chime application instance for tenant
-      const chimeInstaceData = await this.createChimeResources(tenantData.slug);
-
-      // Prepare tenant data with Auth0 references
+      // Prepare tenant data with Auth0 references (without Chime resources initially)
       const tenantPayload = {
         tenantName: tenantData.tenantName,
         slug: tenantData.slug,
@@ -339,9 +338,6 @@ class Auth0Service {
         userOnboardUrl:
           tenantData.userOnboardUrl ||
           `https://${tenantData.slug}.askmeidentity.com/onboard`,
-        ChimeAppInstanceArn: chimeInstaceData.CHIME_APP_INSTANCE_ARN,
-        ChimeBerear: chimeInstaceData.CHIME_BEARER,
-        ChimeBackendAdminRoleArn: chimeInstaceData.CHIME_BACKEND_ADMIN_ROLE_ARN,
         auth0: {
           organizationId: orgResponse.data.organizationId,
           organizationName: orgResponse.data.organizationName,
@@ -351,7 +347,7 @@ class Auth0Service {
         },
       };
 
-      // Save tenant in MongoDB
+      // Save tenant in MongoDB (without Chime resources)
       const tenant = await Tenant.create(tenantPayload);
 
       // create the user for the tenant and create linkId
@@ -389,6 +385,29 @@ class Auth0Service {
           "admin"
         );
       }
+
+      // Now create chime application instance for tenant using user's MongoDB ID
+      console.log("Creating Chime resources with user ID:", checkUser._id.toString());
+      const chimeInstaceData = await this.createChimeResources(
+        tenantData.slug, 
+        checkUser._id.toString()
+      );
+
+      // Update tenant with Chime resources
+      tenant.ChimeAppInstanceArn = chimeInstaceData.CHIME_APP_INSTANCE_ARN;
+      tenant.ChimeBerear = chimeInstaceData.CHIME_BEARER;
+      tenant.ChimeBackendAdminRoleArn = chimeInstaceData.CHIME_BACKEND_ADMIN_ROLE_ARN;
+      await tenant.save();
+      console.log("✅ Tenant updated with Chime resources");
+
+      // Ensure general channel exists and user is added to it
+      console.log("Creating/ensuring general channel for tenant admin");
+      await this.ensureGeneralForUser(checkUser, {
+        CHIME_APP_INSTANCE_ARN: chimeInstaceData.CHIME_APP_INSTANCE_ARN,
+        CHIME_BEARER: chimeInstaceData.CHIME_BEARER,
+        tenantId: tenant._id.toString()
+      });
+      console.log("✅ General channel setup complete");
 
       // create the token and share
       const { accessToken, refreshToken, sessionId } =
@@ -794,6 +813,7 @@ class Auth0Service {
   }
   async getOrganizationDetails(tenantId) {
     try {
+      console.log('Auth0Service: getOrganizationDetails tenantId', tenantId);
       const tenant = await Tenant.findById(tenantId);
       if (!tenant) {
         throw new Error("Tenant or Auth0 organization ID not found");
@@ -809,7 +829,67 @@ class Auth0Service {
     }
   }
 
-  async createChimeResources(tenantName) {
+  /**
+   * Ensure default general channel exists and user is a member (best-effort)
+   * @param {Object} user - The user object
+   * @param {Object} chimeDetails - Chime instance configuration { CHIME_APP_INSTANCE_ARN, CHIME_BEARER, tenantId }
+   */
+  async ensureGeneralForUser(user, chimeDetails = {}) {
+    try {
+      // Prepare userDetails for Chime service calls
+      const userDetails = {
+        chimeAppInstanceArn: chimeDetails.CHIME_APP_INSTANCE_ARN || process.env.CHIME_APP_INSTANCE_ARN,
+        chimebearer: chimeDetails.CHIME_BEARER || process.env.CHIME_BEARER,
+        tenantId: chimeDetails.tenantId || null
+      };
+
+      console.log("✅ ensureGeneralForUser with Chime details:", {
+        hasAppInstanceArn: !!userDetails.chimeAppInstanceArn,
+        hasBearer: !!userDetails.chimebearer,
+        tenantId: userDetails.tenantId
+      });
+
+      let channel = await Channel.findOne({ isDefaultGeneral: true });
+      if (!channel) {
+        console.log("✅ Creating default general channel");
+        channel = await chimeMessagingService.createChannel({
+          name: 'general',
+          description: 'General channel for everyone',
+          isPrivate: false,
+          createdByUser: user,
+          isDefaultGeneral: true,
+          userDetails
+        });
+        console.log("✅ General channel created:", channel._id);
+      } else {
+        console.log("✅ General channel already exists:", channel._id);
+      }
+      
+      const isMember = channel.members.some(id => String(id) === String(user._id));
+      if (!isMember) {
+        console.log("✅ Adding user to general channel");
+        await chimeMessagingService.addMember({ 
+          channelId: channel._id, 
+          user, 
+          userDetails 
+        });
+        console.log("✅ User added to general channel");
+      } else {
+        console.log("✅ Ensuring Chime membership for user");
+        await chimeMessagingService.ensureChimeMembership({ 
+          channelId: channel._id, 
+          user, 
+          userDetails 
+        });
+        console.log("✅ Chime membership ensured");
+      }
+    } catch (err) {
+      logger.warn('Auth0Service: ensureGeneralForUser failed (continuing)', { error: err?.message });
+      console.warn('⚠️ Failed to ensure general channel membership:', err?.message);
+    }
+  }
+
+  async createChimeResources(tenantName, userId) {
     try {
       // 1️⃣ Create App Instance
       const appInstanceResp = await this.chimeClient.send(
@@ -822,17 +902,19 @@ class Auth0Service {
       const appInstanceArn = appInstanceResp.AppInstanceArn;
       console.log("✅ CHIME_APP_INSTANCE_ARN:", appInstanceArn);
 
-      // 2️⃣ Create App Instance User (Bearer)
+      // 2️⃣ Create App Instance User (Bearer) using MongoDB user ID
+      const appInstanceUserId = userId || "backend-admin"; // Fallback to backend-admin if userId not provided
       const userResp = await this.chimeClient.send(
         new CreateAppInstanceUserCommand({
           AppInstanceArn: appInstanceArn,
-          AppInstanceUserId: "backend-admin",
-          Name: "Backend Admin",
+          AppInstanceUserId: appInstanceUserId,
+          Name: `User ${appInstanceUserId}`,
         })
       );
 
       const bearerArn = userResp.AppInstanceUserArn;
       console.log("✅ CHIME_BEARER:", bearerArn);
+      console.log("✅ AppInstanceUserId:", appInstanceUserId);
      // assign user aap instance role 
       const command = await new CreateAppInstanceAdminCommand({
       AppInstanceAdminArn: bearerArn,
