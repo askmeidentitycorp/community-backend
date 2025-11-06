@@ -11,7 +11,7 @@ import {
   ChimeSDKIdentityClient,
   CreateAppInstanceCommand,
   CreateAppInstanceUserCommand,
-  CreateAppInstanceAdminCommand
+  CreateAppInstanceAdminCommand,
 } from "@aws-sdk/client-chime-sdk-identity";
 import {
   IAMClient,
@@ -387,16 +387,20 @@ class Auth0Service {
       }
 
       // Now create chime application instance for tenant using user's MongoDB ID
-      console.log("Creating Chime resources with user ID:", checkUser._id.toString());
+      console.log(
+        "Creating Chime resources with user ID:",
+        checkUser._id.toString()
+      );
       const chimeInstaceData = await this.createChimeResources(
-        tenantData.slug, 
+        tenantData.slug,
         checkUser._id.toString()
       );
 
       // Update tenant with Chime resources
       tenant.ChimeAppInstanceArn = chimeInstaceData.CHIME_APP_INSTANCE_ARN;
       tenant.ChimeBerear = chimeInstaceData.CHIME_BEARER;
-      tenant.ChimeBackendAdminRoleArn = chimeInstaceData.CHIME_BACKEND_ADMIN_ROLE_ARN;
+      tenant.ChimeBackendAdminRoleArn =
+        chimeInstaceData.CHIME_BACKEND_ADMIN_ROLE_ARN;
       await tenant.save();
       console.log("✅ Tenant updated with Chime resources");
 
@@ -405,7 +409,7 @@ class Auth0Service {
       await this.ensureGeneralForUser(checkUser, {
         CHIME_APP_INSTANCE_ARN: chimeInstaceData.CHIME_APP_INSTANCE_ARN,
         CHIME_BEARER: chimeInstaceData.CHIME_BEARER,
-        tenantId: tenant._id.toString()
+        tenantId: tenant._id.toString(),
       });
       console.log("✅ General channel setup complete");
 
@@ -438,6 +442,13 @@ class Auth0Service {
             organization: orgResponse.data,
             connection: connectionResponse.data,
             admin: adminResponse.data,
+          },
+          ChimeAppInstnaceDetail: {
+            CHIME_APP_INSTANCE_ARN:
+              chimeInstaceData.CHIME_APP_INSTANCE_ARN ?? "",
+            CHIME_BEARER: chimeInstaceData.CHIME_BEARER ?? "",
+            CHIME_BACKEND_ADMIN_ROLE_ARN:
+              chimeInstaceData.CHIME_BACKEND_ADMIN_ROLE_ARN ?? "",
           },
           user: {
             id: checkUser._id,
@@ -813,7 +824,7 @@ class Auth0Service {
   }
   async getOrganizationDetails(tenantId) {
     try {
-      console.log('Auth0Service: getOrganizationDetails tenantId', tenantId);
+      console.log("Auth0Service: getOrganizationDetails tenantId", tenantId);
       const tenant = await Tenant.findById(tenantId);
       if (!tenant) {
         throw new Error("Tenant or Auth0 organization ID not found");
@@ -838,54 +849,63 @@ class Auth0Service {
     try {
       // Prepare userDetails for Chime service calls
       const userDetails = {
-        chimeAppInstanceArn: chimeDetails.CHIME_APP_INSTANCE_ARN || process.env.CHIME_APP_INSTANCE_ARN,
+        chimeAppInstanceArn:
+          chimeDetails.CHIME_APP_INSTANCE_ARN ||
+          process.env.CHIME_APP_INSTANCE_ARN,
         chimebearer: chimeDetails.CHIME_BEARER || process.env.CHIME_BEARER,
-        tenantId: chimeDetails.tenantId || null
+        tenantId: chimeDetails.tenantId || null,
       };
 
       console.log("✅ ensureGeneralForUser with Chime details:", {
         hasAppInstanceArn: !!userDetails.chimeAppInstanceArn,
         hasBearer: !!userDetails.chimebearer,
-        tenantId: userDetails.tenantId
+        tenantId: userDetails.tenantId,
       });
 
       let channel = await Channel.findOne({ isDefaultGeneral: true });
       if (!channel) {
         console.log("✅ Creating default general channel");
         channel = await chimeMessagingService.createChannel({
-          name: 'general',
-          description: 'General channel for everyone',
+          name: "general",
+          description: "General channel for everyone",
           isPrivate: false,
           createdByUser: user,
           isDefaultGeneral: true,
-          userDetails
+          userDetails,
         });
         console.log("✅ General channel created:", channel._id);
       } else {
         console.log("✅ General channel already exists:", channel._id);
       }
-      
-      const isMember = channel.members.some(id => String(id) === String(user._id));
+
+      const isMember = channel.members.some(
+        (id) => String(id) === String(user._id)
+      );
       if (!isMember) {
         console.log("✅ Adding user to general channel");
-        await chimeMessagingService.addMember({ 
-          channelId: channel._id, 
-          user, 
-          userDetails 
+        await chimeMessagingService.addMember({
+          channelId: channel._id,
+          user,
+          userDetails,
         });
         console.log("✅ User added to general channel");
       } else {
         console.log("✅ Ensuring Chime membership for user");
-        await chimeMessagingService.ensureChimeMembership({ 
-          channelId: channel._id, 
-          user, 
-          userDetails 
+        await chimeMessagingService.ensureChimeMembership({
+          channelId: channel._id,
+          user,
+          userDetails,
         });
         console.log("✅ Chime membership ensured");
       }
     } catch (err) {
-      logger.warn('Auth0Service: ensureGeneralForUser failed (continuing)', { error: err?.message });
-      console.warn('⚠️ Failed to ensure general channel membership:', err?.message);
+      logger.warn("Auth0Service: ensureGeneralForUser failed (continuing)", {
+        error: err?.message,
+      });
+      console.warn(
+        "⚠️ Failed to ensure general channel membership:",
+        err?.message
+      );
     }
   }
 
@@ -915,13 +935,16 @@ class Auth0Service {
       const bearerArn = userResp.AppInstanceUserArn;
       console.log("✅ CHIME_BEARER:", bearerArn);
       console.log("✅ AppInstanceUserId:", appInstanceUserId);
-     // assign user aap instance role 
+      // assign user aap instance role
       const command = await new CreateAppInstanceAdminCommand({
-      AppInstanceAdminArn: bearerArn,
-      AppInstanceArn: appInstanceArn,
-    });
+        AppInstanceAdminArn: bearerArn,
+        AppInstanceArn: appInstanceArn,
+      });
 
-    console.log("Creating App Instance Admin...",command.input.AppInstanceAdminArn);
+      console.log(
+        "Creating App Instance Admin...",
+        command.input.AppInstanceAdminArn
+      );
 
       // 3️⃣ Create IAM Role for Backend Admin
       const trustPolicy = {

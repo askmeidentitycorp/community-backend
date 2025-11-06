@@ -501,13 +501,15 @@ export const listChannels = async (req, res, next) => {
     // Get channels where user is a member (includes private/public)
     const memberChannels = await Channel.find({ 
       members: user._id,
-      isArchived: { $ne: true }
+      isArchived: { $ne: true },
+      tenantId: req.auth?.tenantId || ''
     }).populate('members', 'name email').lean()
 
     // Get all public channels (discoverable), regardless of membership
     const publicChannels = await Channel.find({ 
       isPrivate: false,
-      isArchived: { $ne: true }
+      isArchived: { $ne: true },
+      tenantId: req.auth?.tenantId || ''
     }).populate('members', 'name email').lean()
 
     // Merge unique by _id, and annotate with isMember
