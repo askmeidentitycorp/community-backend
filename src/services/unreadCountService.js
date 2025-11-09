@@ -76,7 +76,7 @@ class UnreadCountService {
    * @param {string} userId - The user ID
    * @returns {Object} Updated membership with unread count
    */
-  static async markAsRead(channelId, userId) {
+  static async markAsRead(channelId, userId,userDetails ={}) {
     try {
       console.log('[UnreadCountService] markAsRead start', { channelId, userId });
 
@@ -108,6 +108,8 @@ class UnreadCountService {
           lastReadAt: new Date(),
           lastMessageAt: new Date(),
           joinedAt: new Date(),
+          tenantId:userDetails.tenantId,
+          tenantUserLinkId:userDetails.tenantUserLinkId,
           isActive: true,
           notificationSettings: {
             enabled: true,

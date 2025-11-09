@@ -451,9 +451,9 @@ async function createChannel({
   await adminMessagingClient.send(
     new CreateChannelMembershipCommand({
       ChannelArn: channelArn,
-      MemberArn: userDetails.chimebearer,
+      MemberArn: creatorArn,
       Type: "DEFAULT",
-      ChimeBearer: userDetails.chimebearer,
+      ChimeBearer: creatorArn,
     })
   );
 
@@ -469,8 +469,8 @@ async function createChannel({
     await adminMessagingClient.send(
       new CreateChannelModeratorCommand({
         ChannelArn: channelArn,
-        ChannelModeratorArn: userDetails.chimebearer,
-        ChimeBearer: userDetails.chimebearer,
+        ChannelModeratorArn: creatorArn,
+        ChimeBearer: creatorArn,
       })
     );
     logger.info("[Chime] Creator promoted to channel moderator", {
@@ -692,6 +692,8 @@ async function sendMessage({ channelId, author, content, userDetails = {} }) {
     authorId: author._id,
     content,
     isEdited: false,
+    tenantUserLinkId: userDetails.tenantUserLinkId || null,
+    tenantId: userDetails.tenantId || null,
     externalRef: {
       provider: "chime",
       messageId: res.MessageId,
