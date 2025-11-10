@@ -711,7 +711,7 @@ export const markChannelAsRead = async (req, res, next) => {
     if (!channel) return next(new AppError('Channel not found', 404, 'NOT_FOUND'))
 
     // Mark channel as read for the user
-    const membership = await UnreadCountService.markAsRead(channelId, req.auth.userId)
+    const membership = await UnreadCountService.markAsRead(channelId, req.auth.userId,req.auth)
     
     console.log('[Controller] markChannelAsRead success', { 
       channelId, 
