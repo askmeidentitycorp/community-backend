@@ -136,6 +136,8 @@ export const validatePlatformToken = async (req, res, next) => {
       chimebearer: decoded.ChimeBerear || '',
       chimeAppInstanceArn: decoded.ChimeAppInstanceArn || '',
       chimeBackendAdminRoleArn: decoded.ChimeBackendAdminRoleArn || '',
+      userName: decoded.name,
+      userEmail: decoded.email,
     };
     logger.info('Middleware: validatePlatformToken attached auth', { auth: req.auth });
     logger.info('Middleware: validatePlatformToken success', { userId: decoded?.userId });

@@ -66,7 +66,11 @@ async function ensureAppInstanceUser(user) {
     await adminIdentityClient.send(new CreateAppInstanceUserCommand({
       AppInstanceArn: APP_INSTANCE_ARN,
       AppInstanceUserId: appInstanceUserId,
-      Name: user.name || user.email || appInstanceUserId
+      Name: user.name || user.email || appInstanceUserId,
+      Metadata: {
+        Auth0Id: user.auth0Id,
+        Email: user.email
+      }
     }))
     logger.info('[Chime] AppInstanceUser created successfully', { appInstanceUserArn })
     return appInstanceUserArn
@@ -281,7 +285,7 @@ async function syncChannelFromChime({ chimeChannel, createdByUser }) {
   return channel
 }
 
-async function createChannel({ name, description, isPrivate, createdByUser, isDefaultGeneral = false }) {
+async function createChannel({ name, description, isPrivate, createdByUser, isDefaultGeneral = false, from = null, members = [], admins = [] }) {
   logger.info('[Chime] createChannel start', { name, isDefaultGeneral, createdByUser: createdByUser._id })
   if (!APP_INSTANCE_ARN) throw new Error('CHIME_APP_INSTANCE_ARN not configured')
   
@@ -316,11 +320,11 @@ async function createChannel({ name, description, isPrivate, createdByUser, isDe
     name,
     description,
     isPrivate: !!isPrivate,
-    members: [createdByUser._id],
-    admins: [createdByUser._id],
+    members: from === 'connection' ? [members[0], members[1]] : [createdByUser._id],
+    admins: from === 'connection' ? [admins[0], admins[1]] : [createdByUser._id],
     createdBy: createdByUser._id,
     isDefaultGeneral: !!isDefaultGeneral,
-    chime: { channelArn, mode: 'RESTRICTED', privacy, type: 'channel' }
+    chime: { channelArn, mode: 'RESTRICTED', privacy, type: from === 'connection' ? 'dm' : 'channel' }
   })
   logger.info('[Chime] Channel saved to MongoDB', { channelId: channel._id })
   

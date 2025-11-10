@@ -115,6 +115,10 @@ async function ensureAppInstanceUser(user,userDetails = {}) {
         AppInstanceArn: APP_INSTANCE_ARN,
         AppInstanceUserId: appInstanceUserId,
         Name: user.name || user.email || appInstanceUserId,
+      Metadata: {
+        Auth0Id: user.auth0Id,
+        Email: user.email
+      },
       })
     );
     logger.info("[Chime] AppInstanceUser created successfully", {
@@ -379,7 +383,7 @@ async function createChannel({
   description,
   isPrivate,
   createdByUser,
-  isDefaultGeneral = false,
+  isDefaultGeneral = false, from = null, members = [], admins = [],
   userDetails = {},
 }) {
   logger.info("[Chime] createChannel start", {
@@ -439,31 +443,23 @@ async function createChannel({
     name,
     description,
     isPrivate: !!isPrivate,
-    members: [ createdByUser._id],
-    admins: [ createdByUser._id ],
+    members: from === 'connection' ? [members[0], members[1]] : [createdByUser._id],
+    admins: from === 'connection' ? [admins[0], admins[1]] : [createdByUser._id],
     createdBy: createdByUser._id,
     tenantId: userDetails.tenantId || "",
     isDefaultGeneral: !!isDefaultGeneral,
-    chime: { channelArn, mode: "RESTRICTED", privacy, type: "channel" },
-  });
-  logger.info("[Chime] Channel saved to MongoDB", { channelId: channel._id });
-
-  await adminMessagingClient.send(
-    new CreateChannelMembershipCommand({
-      ChannelArn: channelArn,
-      MemberArn: userDetails.chimebearer,
-      Type: "DEFAULT",
-      ChimeBearer: userDetails.chimebearer,
-    })
-  );
-
-  logger.info("[Chime] Creator added as channel member", {
-    channelArn,
-    creatorArn,
-  });
-
-
-
+    chime: { channelArn, mode: 'RESTRICTED', privacy, type: from === 'connection' ? 'dm' : 'channel' }
+  })
+  logger.info('[Chime] Channel saved to MongoDB', { channelId: channel._id })
+  
+  await adminMessagingClient.send(new CreateChannelMembershipCommand({
+    ChannelArn: channelArn,
+    MemberArn: creatorArn,
+    Type: 'DEFAULT',
+    ChimeBearer: creatorArn
+  }))
+  logger.info('[Chime] Creator added as channel member', { channelArn, creatorArn })
+  
   // Promote creator to channel moderator in Chime
   try {
     await adminMessagingClient.send(

@@ -492,6 +492,7 @@ export const ensureGeneralChannelOnly = async (req, res, next) => {
 
 export const listChannels = async (req, res, next) => {
   try {
+    const type = req.query.type || null
     console.log('[Controller] listChannels start', { userId: req.auth?.userId })
     if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
     
@@ -502,8 +503,20 @@ export const listChannels = async (req, res, next) => {
     const memberChannels = await Channel.find({ 
       members: user._id,
       isArchived: { $ne: true },
+      'chime.type': 'channel',
       tenantId: req.auth?.tenantId || ''
     }).populate('members', 'name email').lean()
+
+
+    if(type === 'dm'){
+      const dmChannels = await Channel.find({ 
+        members: user._id,
+        isArchived: { $ne: true },
+        chime: { $exists: true },
+        'chime.type': 'dm'
+      }).populate('members', 'name email').lean()
+      return res.json({ channels: dmChannels })
+    }
 
     // Get all public channels (discoverable), regardless of membership
     const publicChannels = await Channel.find({ 

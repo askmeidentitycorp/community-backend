@@ -51,6 +51,7 @@ router.delete(
 router.put(
   '/discussions/:discussionId/comments/:commentId',
   validatePlatformToken,
+  // optional image replacement via multipart form handled in controller if wired in via gateway
   validate(Joi.object({ content: Joi.string().min(1).required() })),
   commentController.updateComment
 );

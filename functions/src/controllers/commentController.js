@@ -201,6 +201,7 @@ class CommentController {
         return next(new AppError('Insufficient permissions', 403, 'FORBIDDEN'));
       }
 
+      // Optional image replacement via multipart form-data
       if (req.file && req.file.buffer) {
         const imageUrl = await uploadBufferToS3(req.file.buffer, {
           contentType: req.file.mimetype,

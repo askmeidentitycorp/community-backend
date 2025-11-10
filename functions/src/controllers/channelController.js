@@ -371,12 +371,13 @@ export const mirrorMessage = async (req, res, next) => {
       externalRef: { provider: 'chime', messageId, channelArn: channel.chime.channelArn }
     }
     
-    // Add metadata if provided
+    // Extract mentions from metadata if provided
     if (metadata) {
       doc.metadata = metadata
       
-      // Extract mentions from metadata if present
+      // Extract mentions array from metadata.mentions
       if (Array.isArray(metadata.mentions) && metadata.mentions.length > 0) {
+        // Validate that all mention IDs are valid ObjectIds
         const validMentions = metadata.mentions.filter(id => mongoose.Types.ObjectId.isValid(id))
         if (validMentions.length > 0) {
           doc.mentions = validMentions
@@ -419,7 +420,7 @@ export const mirrorMessage = async (req, res, next) => {
     try {
       const dbName = mongoose?.connection?.db?.databaseName
       const coll = Message?.collection?.collectionName
-      console.log('[Controller] mirrorMessage saved', { id: saved?._id, dbName, collection: coll })
+      console.log('[Controller] mirrorMessage saved', { id: saved?._id, dbName, collection: coll, mentions: saved.mentions })
     } catch {}
     return res.status(201).json({ message: saved })
   } catch (err) {
@@ -481,6 +482,7 @@ export const ensureGeneralChannelOnly = async (req, res, next) => {
 
 export const listChannels = async (req, res, next) => {
   try {
+    const type = req.query.type || null
     console.log('[Controller] listChannels start', { userId: req.auth?.userId })
     if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
     
@@ -490,8 +492,20 @@ export const listChannels = async (req, res, next) => {
     // Get channels where user is a member (includes private/public)
     const memberChannels = await Channel.find({ 
       members: user._id,
-      isArchived: { $ne: true }
+      isArchived: { $ne: true },
+      'chime.type': 'channel'
     }).populate('members', 'name email').lean()
+
+
+    if(type === 'dm'){
+      const dmChannels = await Channel.find({ 
+        members: user._id,
+        isArchived: { $ne: true },
+        chime: { $exists: true },
+        'chime.type': 'dm'
+      }).populate('members', 'name email').lean()
+      return res.json({ channels: dmChannels })
+    }
 
     // Get all public channels (discoverable), regardless of membership
     const publicChannels = await Channel.find({ 
