@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import mongoose from 'mongoose';
 import Discussion from '../models/Discussion.js';
 import Comment from '../models/Comment.js';
+import { TenantUserLink } from '../models/TenantUserLinkModel.js';
 
 class UserController {
   async searchUsers(req, res, next) {
@@ -19,12 +20,42 @@ class UserController {
         return res.status(200).json({ users: [], nextCursor: null, total: 0 });
       }
 
+      // Ensure user is authenticated with tenant info
+      if (!req.auth || !req.auth.userId) {
+        throw new AppError('Authentication required', 401, 'UNAUTHORIZED');
+      }
+
+      const currentUserId = req.auth.userId;
+      const tenantId = req.auth.tenantId;
+
+      // Validate tenant ID exists
+      if (!tenantId) {
+        logger.warn('User search: No tenant ID found in token', { userId: currentUserId });
+        return res.status(200).json({ users: [], nextCursor: null, total: 0 });
+      }
+
+      // Get all userIds that belong to the same tenant
+      const tenantUserLinks = await TenantUserLink.find({
+        tenantId: tenantId,
+        status: 'active'
+      }).select('userId').lean();
+
+      const tenantUserIds = tenantUserLinks.map(link => link.userId);
+
+      if (tenantUserIds.length === 0) {
+        return res.status(200).json({ users: [], nextCursor: null, total: 0 });
+      }
+
       // Build efficient prefix queries using indexed fields
-      // Use compound filter to only return active, non-deleted users
-      const baseFilter = { isActive: true, isDeleted: false };
+      // Use compound filter to only return active, non-deleted users within the same tenant
+      const baseFilter = { 
+        isActive: true, 
+        isDeleted: false,
+        _id: { $in: tenantUserIds }
+      };
 
       // We will paginate using a cursor based on _id for stable ordering
-      const paginationFilter = cursor ? { _id: { $gt: new mongoose.Types.ObjectId(cursor) } } : {};
+      const paginationFilter = cursor ? { _id: { $gt: new mongoose.Types.ObjectId(cursor), $in: tenantUserIds } } : {};
 
       // Match either email prefix or nameLower prefix
       // Using $or with anchored regexes leverages index prefix and remains efficient for high volume
@@ -52,6 +83,13 @@ class UserController {
         .lean();
 
       const nextCursor = docs.length ? docs[docs.length - 1]._id : null;
+
+      logger.info('User search completed', { 
+        userId: currentUserId, 
+        tenantId: tenantId.toString(), 
+        query: sanitizedQuery, 
+        resultsCount: docs.length 
+      });
 
       return res.status(200).json({
         users: docs.map(d => ({

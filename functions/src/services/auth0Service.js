@@ -1,6 +1,24 @@
-import axios from 'axios';
-import auth0Config from '../config/auth0.js';
-import { logger } from '../utils/logger.js';
+import axios from "axios";
+import auth0Config from "../config/auth0.js";
+import { logger } from "../utils/logger.js";
+import { Tenant } from "../models/tenantModel.js";
+import { TenantUserLink } from "../models/TenantUserLinkModel.js"; // your model file
+import User from "../models/User.js";
+import Channel from "../models/Channel.js";
+import tokenService from "./tokenService.js";
+import chimeMessagingService from "./chimeMessagingService.js";
+import {
+  ChimeSDKIdentityClient,
+  CreateAppInstanceCommand,
+  CreateAppInstanceUserCommand,
+  CreateAppInstanceAdminCommand,
+} from "@aws-sdk/client-chime-sdk-identity";
+import {
+  IAMClient,
+  CreateRoleCommand,
+  AttachRolePolicyCommand,
+  GetRoleCommand,
+} from "@aws-sdk/client-iam";
 
 /**
  * Service for interacting with Auth0 Management API
@@ -9,6 +27,11 @@ class Auth0Service {
   constructor() {
     this.token = null;
     this.tokenExpiresAt = 0;
+    this.REGION = process.env.AWS_REGION;
+    this.chimeClient = new ChimeSDKIdentityClient({
+      region: process.env.AWS_REGION,
+    });
+    this.iamClient = new IAMClient({ region: process.env.AWS_REGION });
   }
 
   /**
@@ -27,20 +50,25 @@ class Auth0Service {
           client_id: auth0Config.clientId,
           client_secret: auth0Config.clientSecret,
           audience: `https://${auth0Config.domain}/api/v2/`,
-          grant_type: 'client_credentials',
+          grant_type: "client_credentials",
         },
         {
-          headers: { 'Content-Type': 'application/json' },
+          headers: { "Content-Type": "application/json" },
         }
       );
 
       this.token = response.data.access_token;
       // Set expiry 5 minutes before actual expiry to be safe
-      this.tokenExpiresAt = Date.now() + (response.data.expires_in - 300) * 1000;
+      this.tokenExpiresAt =
+        Date.now() + (response.data.expires_in - 300) * 1000;
       return this.token;
     } catch (error) {
-      logger.error('Failed to get Auth0 management token:', error);
-      throw new Error('Failed to authenticate with Auth0 Management API');
+      console.error(
+        "Error fetching Auth0 management token:",
+        error.response?.data || error.message
+      );
+      logger.error("Failed to get Auth0 management token:", error);
+      throw new Error("Failed to authenticate with Auth0 Management API");
     }
   }
 
@@ -51,12 +79,12 @@ class Auth0Service {
     try {
       // Check if user exists by email
       const existingUser = await this.getUserByEmail(userData.email);
-      
+
       if (existingUser) {
         // Update existing user
         const token = await this.getManagementToken();
         const userId = existingUser.user_id;
-        
+
         const response = await axios.patch(
           `https://${auth0Config.domain}/api/v2/users/${userId}`,
           {
@@ -67,16 +95,16 @@ class Auth0Service {
           {
             headers: {
               Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
+              "Content-Type": "application/json",
             },
           }
         );
-        
+
         return response.data;
       } else {
         // Create new user
         const token = await this.getManagementToken();
-        
+
         const response = await axios.post(
           `https://${auth0Config.domain}/api/v2/users`,
           {
@@ -90,16 +118,16 @@ class Auth0Service {
           {
             headers: {
               Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
+              "Content-Type": "application/json",
             },
           }
         );
-        
+
         return response.data;
       }
     } catch (error) {
-      logger.error('Failed to upsert user in Auth0:', error);
-      throw new Error('Failed to create/update user in Auth0');
+      logger.error("Failed to upsert user in Auth0:", error);
+      throw new Error("Failed to create/update user in Auth0");
     }
   }
 
@@ -109,7 +137,7 @@ class Auth0Service {
   async getUserByEmail(email) {
     try {
       const token = await this.getManagementToken();
-      
+
       const response = await axios.get(
         `https://${auth0Config.domain}/api/v2/users-by-email`,
         {
@@ -119,10 +147,10 @@ class Auth0Service {
           },
         }
       );
-      
+
       return response.data.length > 0 ? response.data[0] : null;
     } catch (error) {
-      logger.error('Failed to get user by email from Auth0:', error);
+      logger.error("Failed to get user by email from Auth0:", error);
       return null;
     }
   }
@@ -133,7 +161,7 @@ class Auth0Service {
   async getUserById(userId) {
     try {
       const token = await this.getManagementToken();
-      
+
       const response = await axios.get(
         `https://${auth0Config.domain}/api/v2/users/${userId}`,
         {
@@ -142,10 +170,10 @@ class Auth0Service {
           },
         }
       );
-      
+
       return response.data;
     } catch (error) {
-      logger.error('Failed to get user by ID from Auth0:', error);
+      logger.error("Failed to get user by ID from Auth0:", error);
       return null;
     }
   }
@@ -156,20 +184,20 @@ class Auth0Service {
   async blockUser(userId) {
     try {
       const token = await this.getManagementToken();
-      
+
       await axios.patch(
         `https://${auth0Config.domain}/api/v2/users/${userId}`,
         { blocked: true },
         {
           headers: {
             Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
         }
       );
     } catch (error) {
-      logger.error('Failed to block user in Auth0:', error);
-      throw new Error('Failed to block user in Auth0');
+      logger.error("Failed to block user in Auth0:", error);
+      throw new Error("Failed to block user in Auth0");
     }
   }
 
@@ -179,20 +207,20 @@ class Auth0Service {
   async unblockUser(userId) {
     try {
       const token = await this.getManagementToken();
-      
+
       await axios.patch(
         `https://${auth0Config.domain}/api/v2/users/${userId}`,
         { blocked: false },
         {
           headers: {
             Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
         }
       );
     } catch (error) {
-      logger.error('Failed to unblock user in Auth0:', error);
-      throw new Error('Failed to unblock user in Auth0');
+      logger.error("Failed to unblock user in Auth0:", error);
+      throw new Error("Failed to unblock user in Auth0");
     }
   }
 
@@ -202,24 +230,769 @@ class Auth0Service {
   async updateUserMetadata(userId, metadata, isAppMetadata = false) {
     try {
       const token = await this.getManagementToken();
-      
-      const data = isAppMetadata 
-        ? { app_metadata: metadata } 
+
+      const data = isAppMetadata
+        ? { app_metadata: metadata }
         : { user_metadata: metadata };
-      
+
       await axios.patch(
         `https://${auth0Config.domain}/api/v2/users/${userId}`,
         data,
         {
           headers: {
             Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
         }
       );
     } catch (error) {
-      logger.error('Failed to update user metadata in Auth0:', error);
-      throw new Error('Failed to update user metadata in Auth0');
+      logger.error("Failed to update user metadata in Auth0:", error);
+      throw new Error("Failed to update user metadata in Auth0");
+    }
+  }
+
+  // onboard tenant
+  async onboardTenant(tenantData, deviceInfo = {}) {
+    try {
+      // Validate required fields
+      if (
+        !tenantData?.tenantName ||
+        !tenantData?.slug ||
+        !tenantData?.email ||
+        !tenantData?.password
+      ) {
+        return {
+          success: false,
+          message:
+            "Missing required fields: tenantName, slug, email or password",
+        };
+      }
+
+      // Check if tenant already exists by slug or email
+      const existingTenant = await Tenant.findOne({
+        slug: tenantData.slug,
+        email: tenantData.email,
+      });
+
+      if (existingTenant) {
+        return {
+          success: false,
+          message: "Tenant already exists with this slug or email",
+        };
+      }
+
+      // Get Auth0 management token
+      const token = await this.getManagementToken();
+      if (!token) {
+        return {
+          success: false,
+          message: "Failed to obtain Auth0 management token",
+        };
+      }
+
+      const orgResponse = await this.createAuth0Organization(tenantData, token);
+      if (!orgResponse.success) {
+        return orgResponse;
+      }
+
+      const connectionResponse = await this.createAuth0Connection(
+        tenantData,
+        token
+      );
+      if (!connectionResponse.success) {
+        return connectionResponse;
+      }
+
+      const linkResponse = await this.linkConnectionToOrganization(
+        orgResponse.data.organizationId,
+        connectionResponse.data.connectionId,
+        token
+      );
+      if (!linkResponse.success) {
+        return linkResponse;
+      }
+
+      // delay for auth0 consistency
+      console.log("Waiting for connection to be ready...");
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      const adminResponse = await this.createOrganizationAdmin(
+        orgResponse.data.organizationId,
+        tenantData, // Pass entire tenantData object
+        token,
+        connectionResponse.data.connectionName,
+        connectionResponse.data.dbConnectionName
+      );
+
+      if (!adminResponse.success) {
+        return adminResponse;
+      }
+
+      // Prepare tenant data with Auth0 references (without Chime resources initially)
+      const tenantPayload = {
+        tenantName: tenantData.tenantName,
+        slug: tenantData.slug,
+        email: tenantData.email,
+        status: tenantData.status || "active",
+        plan: tenantData.plan || "free",
+        userOnboardUrl:
+          tenantData.userOnboardUrl ||
+          `https://${tenantData.slug}.askmeidentity.com/onboard`,
+        auth0: {
+          organizationId: orgResponse.data.organizationId,
+          organizationName: orgResponse.data.organizationName,
+          connectionId: connectionResponse.data.connectionId,
+          adminUserId: adminResponse.data.userId,
+          connectionName: connectionResponse.data.connectionName,
+        },
+      };
+
+      // Save tenant in MongoDB (without Chime resources)
+      const tenant = await Tenant.create(tenantPayload);
+
+      // create the user for the tenant and create linkId
+      let checkUser = await User.findOne({ email: tenantData.email });
+      let addUserToTenant;
+      if (checkUser) {
+        console.log(
+          "✅ Tenant admin user already exists in MongoDB:",
+          checkUser._id
+        );
+        addUserToTenant = await this.addUserToTenant(
+          tenant._id,
+          checkUser._id,
+          "admin"
+        );
+      }
+
+      if (!checkUser) {
+        const newUser = await User.create({
+          auth0Id: adminResponse.data.userId,
+          email: tenantData.email,
+          firstName: tenantData.slug,
+          lastName: "",
+          name: tenantData.tenantName,
+          isActive: true,
+          isVerified: true,
+          lastLogin: new Date(),
+          roles: ["super_admin"],
+          picture: adminResponse.data.picture,
+        });
+        checkUser = newUser;
+        addUserToTenant = await this.addUserToTenant(
+          tenant._id,
+          newUser._id,
+          "admin"
+        );
+      }
+
+      // Now create chime application instance for tenant using user's MongoDB ID
+      console.log(
+        "Creating Chime resources with user ID:",
+        checkUser._id.toString()
+      );
+      const chimeInstaceData = await this.createChimeResources(
+        tenantData.slug,
+        checkUser._id.toString()
+      );
+
+      // Update tenant with Chime resources
+      tenant.ChimeAppInstanceArn = chimeInstaceData.CHIME_APP_INSTANCE_ARN;
+      tenant.ChimeBerear = chimeInstaceData.CHIME_BEARER;
+      tenant.ChimeBackendAdminRoleArn =
+        chimeInstaceData.CHIME_BACKEND_ADMIN_ROLE_ARN;
+      await tenant.save();
+      console.log("✅ Tenant updated with Chime resources");
+
+      // Ensure general channel exists and user is added to it
+      console.log("Creating/ensuring general channel for tenant admin");
+      await this.ensureGeneralForUser(checkUser, {
+        CHIME_APP_INSTANCE_ARN: chimeInstaceData.CHIME_APP_INSTANCE_ARN,
+        CHIME_BEARER: chimeInstaceData.CHIME_BEARER,
+        tenantId: tenant._id.toString(),
+      });
+      console.log("✅ General channel setup complete");
+
+      // create the token and share
+      const { accessToken, refreshToken, sessionId } =
+        await tokenService.createSession(
+          checkUser._id.toString(),
+          deviceInfo,
+          null,
+          adminResponse.data.adminUserId,
+          null,
+          tenant._id,
+          addUserToTenant.data._id.toString(),
+          chimeInstaceData
+        );
+      logger.info("Auth0: platform tokens issued (code-exchange)", {
+        userId: checkUser._id.toString(),
+        sessionId: sessionId?.toString?.() || sessionId,
+      });
+
+      // Success response
+      return {
+        success: true,
+        data: {
+          tenant: tenant,
+          token: accessToken,
+          refreshToken,
+          id_token: accessToken,
+          auth0: {
+            organization: orgResponse.data,
+            connection: connectionResponse.data,
+            admin: adminResponse.data,
+          },
+          ChimeAppInstnaceDetail: {
+            CHIME_APP_INSTANCE_ARN:
+              chimeInstaceData.CHIME_APP_INSTANCE_ARN ?? "",
+            CHIME_BEARER: chimeInstaceData.CHIME_BEARER ?? "",
+            CHIME_BACKEND_ADMIN_ROLE_ARN:
+              chimeInstaceData.CHIME_BACKEND_ADMIN_ROLE_ARN ?? "",
+          },
+          user: {
+            id: checkUser._id,
+            email: checkUser.email,
+            name: checkUser.name,
+            firstName: checkUser?.firstName,
+            lastName: checkUser?.lastName ?? "",
+            roles: Array.isArray(checkUser.roles) ? checkUser.roles : [],
+            avatarUrl: checkUser?.avatarUrl ?? "",
+            avatarSource: checkUser?.avatarSource ?? "",
+          },
+        },
+      };
+    } catch (error) {
+      logger?.error?.("Failed to onboard tenant:", error);
+      return {
+        success: false,
+        message: error.message || "Failed to onboard tenant",
+      };
+    }
+  }
+
+  async createAuth0Organization(tenantData, token) {
+    try {
+      // Format organization name according to Auth0 requirements
+      const organizationName = this.formatOrganizationName(tenantData.slug);
+      const displayName = tenantData.tenantName;
+      // Prepare the request payload with null for optional URLs
+      const payload = {
+        name: organizationName,
+        display_name: displayName,
+        branding: {
+          logo_url: "https://askmeidentity.com/img/logo_aaa.538b2e29.webp",
+          colors: {
+            primary: tenantData.primaryColor || "#005ea2",
+            page_background: tenantData.backgroundColor || "#ffffff",
+          },
+        },
+        metadata: {
+          tenant_slug: tenantData.slug,
+          //   tenant_id: tenantData._id?.toString() || "",
+          //   plan: tenantData.plan || 'free',
+          created_via: "api",
+        },
+      };
+
+      const response = await fetch(
+        `https://${auth0Config.domain}/api/v2/organizations`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Auth0 organization creation error:", errorData);
+        throw new Error(
+          errorData.message ||
+            `HTTP ${response.status}: Failed to create Auth0 organization`
+        );
+      }
+
+      const orgData = await response.json();
+
+      return {
+        success: true,
+        data: {
+          organizationId: orgData.id,
+          organizationName: organizationName,
+          displayName: orgData.display_name,
+        },
+      };
+    } catch (error) {
+      logger?.error?.("Failed to create Auth0 organization:", error);
+      return {
+        success: false,
+        message: `Auth0 organization creation failed: ${error.message}`,
+      };
+    }
+  }
+
+  formatOrganizationName(tenantData) {
+    return `org-${Date.now()}`;
+  }
+
+  async createAuth0Connection(tenantData, token) {
+    try {
+      const connectionName = `${tenantData.slug.toLowerCase()}-${Date.now()}-connection`;
+      const realm = `${tenantData.slug.toLowerCase()}-${Date.now()}`;
+
+      const payload = {
+        name: connectionName,
+        display_name: `${tenantData.tenantName} Database Connection`,
+        strategy: "auth0",
+        options: {
+          allowSignup: true,
+          disable_signup: false,
+          non_persistent_attrs: [],
+          // remove phone_number from precedence
+          precedence: ["email", "username", "phone_number"],
+
+          attributes: {
+            email: {
+              identifier: { active: true },
+              profile_required: true,
+              verification_method: "link",
+              signup: {
+                status: "required",
+                verification: { active: true },
+              },
+            },
+            username: {
+              identifier: { active: false },
+              profile_required: false,
+              signup: {},
+            },
+            // completely remove or comment out this section 👇
+            phone_number: {
+              identifier: { active: false },
+              profile_required: false,
+
+              signup: {
+                verification: { active: false },
+                //required: false,
+              },
+            },
+          },
+
+          authentication_methods: {
+            password: { enabled: true },
+            passkey: { enabled: false },
+          },
+          passwordPolicy: "good",
+          password_complexity_options: {
+            min_length: 8,
+          },
+          password_history: {
+            enable: true,
+            size: 5,
+          },
+          password_no_personal_info: {
+            enable: true,
+          },
+          api_enable_users: true,
+          basic_profile: true,
+          ext_profile: true,
+          disable_self_service_change_password: false,
+        },
+        enabled_clients: [auth0Config.clientId],
+        is_domain_connection: false,
+        realms: [realm],
+        metadata: {
+          tenant_slug: tenantData.slug,
+          tenant_name: tenantData.tenantName,
+        },
+      };
+
+      console.log("Connection Payload:", JSON.stringify(payload, null, 2));
+
+      const response = await fetch(
+        `https://${auth0Config.domain}/api/v2/connections`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Auth0 connection creation error:", errorData);
+        throw new Error(
+          errorData.message || "Failed to create Auth0 connection"
+        );
+      }
+
+      const connectionData = await response.json();
+
+      return {
+        success: true,
+        data: {
+          connectionId: connectionData.id,
+          connectionName: connectionData.name,
+          dbConnectionName: connectionName,
+        },
+      };
+    } catch (error) {
+      logger?.error?.("Failed to create Auth0 connection:", error);
+      return {
+        success: false,
+        message: `Auth0 connection creation failed: ${error.message}`,
+      };
+    }
+  }
+
+  // Helper method to link connection to organization
+  async linkConnectionToOrganization(organizationId, connectionId, token) {
+    try {
+      const response = await fetch(
+        `https://${auth0Config.domain}/api/v2/organizations/${organizationId}/enabled_connections`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            connection_id: connectionId,
+            assign_membership_on_login: true,
+            is_signup_enabled: true,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(
+          error.message || "Failed to link connection to organization"
+        );
+      }
+
+      return { success: true };
+    } catch (error) {
+      logger?.error?.("Failed to link connection to organization:", error);
+      return {
+        success: false,
+        message: `Connection linking failed: ${error.message}`,
+      };
+    }
+  }
+
+  async createOrganizationAdmin(
+    organizationId,
+    tenantData,
+    token,
+    connectionId,
+    dbConnectionName
+  ) {
+    try {
+      // Use the actual connection ID that was created, not the name
+      const connectionName = dbConnectionName;
+      console.log("Creating admin user with connection:", connectionName);
+      console.log("Using connection ID:", connectionId);
+
+      // First create the user in Auth0
+      const userResponse = await fetch(
+        `https://${auth0Config.domain}/api/v2/users`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            email: tenantData.email,
+            password: tenantData.password,
+            name: tenantData.tenantName,
+            connection: connectionName, // Use the connection name, not ID
+            email_verified: true,
+            app_metadata: {
+              role: "admin",
+              tenant_admin: true,
+              tenant_slug: tenantData.slug,
+              organization_id: organizationId,
+            },
+            user_metadata: {
+              tenant_name: tenantData.tenantName,
+              signup_source: "tenant_onboarding",
+            },
+          }),
+        }
+      );
+
+      if (!userResponse.ok) {
+        const errorData = await userResponse.json();
+        console.error("User creation error details:", errorData);
+        throw new Error(errorData.message || "Failed to create admin user");
+      }
+
+      const userData = await userResponse.json();
+      console.log("Admin user created:", userData);
+
+      // Add user to organization as admin
+      const orgMembershipResponse = await fetch(
+        `https://${auth0Config.domain}/api/v2/organizations/${organizationId}/members`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            members: [userData.user_id],
+          }),
+        }
+      );
+
+      if (!orgMembershipResponse.ok) {
+        const errorData = await orgMembershipResponse.json();
+        console.error("Organization membership error:", errorData);
+
+        // Don't throw error here, just log it since user was created successfully
+        console.warn(
+          "User created but failed to add to organization:",
+          errorData.message
+        );
+      } else {
+        console.log("User added to organization successfully");
+      }
+
+      return {
+        success: true,
+        data: {
+          userId: userData.user_id,
+          email: userData.email,
+          userName: userData.name,
+          picture: userData.picture,
+        },
+      };
+    } catch (error) {
+      logger?.error?.("Failed to create organization admin:", error);
+      return {
+        success: false,
+        message: `Admin user creation failed: ${error.message}`,
+      };
+    }
+  }
+  async addUserToTenant(tenantId, userId, role = "member", invitedBy = null) {
+    try {
+      //  check if link already exists
+      const existingLink = await TenantUserLink.findOne({ tenantId, userId });
+      if (existingLink) {
+        console.log("User already part of tenant");
+        return {
+          success: false,
+          data: existingLink,
+          message: "User already part of tenant",
+        };
+      }
+
+      // Create the tenant-user link
+      const link = await TenantUserLink.create({
+        tenantId,
+        userId,
+        role,
+        status: "active",
+        invitedBy,
+        joinedAt: new Date(),
+      });
+
+      console.log("✅ User added to tenant successfully!");
+      return {
+        success: true,
+        data: link,
+      };
+    } catch (err) {
+      console.error("❌ Error adding user to tenant:", err.message);
+      throw err;
+    }
+  }
+  async getOrganizationDetails(tenantId) {
+    try {
+      console.log("Auth0Service: getOrganizationDetails tenantId", tenantId);
+      const tenant = await Tenant.findById(tenantId);
+      if (!tenant) {
+        throw new Error("Tenant or Auth0 organization ID not found");
+      }
+
+      return {
+        success: true,
+        data: tenant.auth0,
+      };
+    } catch (error) {
+      logger.error("Failed to get organization details:", error);
+      throw new Error("Failed to get organization details");
+    }
+  }
+
+  /**
+   * Ensure default general channel exists and user is a member (best-effort)
+   * @param {Object} user - The user object
+   * @param {Object} chimeDetails - Chime instance configuration { CHIME_APP_INSTANCE_ARN, CHIME_BEARER, tenantId }
+   */
+  async ensureGeneralForUser(user, chimeDetails = {}) {
+    try {
+      // Prepare userDetails for Chime service calls
+      const userDetails = {
+        chimeAppInstanceArn:
+          chimeDetails.CHIME_APP_INSTANCE_ARN ||
+          process.env.CHIME_APP_INSTANCE_ARN,
+        chimebearer: chimeDetails.CHIME_BEARER || process.env.CHIME_BEARER,
+        tenantId: chimeDetails.tenantId || null,
+      };
+
+      console.log("✅ ensureGeneralForUser with Chime details:", {
+        hasAppInstanceArn: !!userDetails.chimeAppInstanceArn,
+        hasBearer: !!userDetails.chimebearer,
+        tenantId: userDetails.tenantId,
+      });
+
+      let channel = await Channel.findOne({ isDefaultGeneral: true, tenantId: userDetails.tenantId });
+      if (!channel) {
+        console.log("✅ Creating default general channel");
+        channel = await chimeMessagingService.createChannel({
+          name: "general",
+          description: "General channel for everyone",
+          isPrivate: false,
+          createdByUser: user,
+          isDefaultGeneral: true,
+          userDetails,
+        });
+        console.log("✅ General channel created:", channel._id);
+      } else {
+        console.log("✅ General channel already exists:", channel._id);
+      }
+
+      const isMember = channel.members.some(
+        (id) => String(id) === String(user._id)
+      );
+      if (!isMember) {
+        console.log("✅ Adding user to general channel");
+        await chimeMessagingService.addMember({
+          channelId: channel._id,
+          user,
+          userDetails,
+        });
+        console.log("✅ User added to general channel");
+      } else {
+        console.log("✅ Ensuring Chime membership for user");
+        await chimeMessagingService.ensureChimeMembership({
+          channelId: channel._id,
+          user,
+          userDetails,
+        });
+        console.log("✅ Chime membership ensured");
+      }
+    } catch (err) {
+      logger.warn("Auth0Service: ensureGeneralForUser failed (continuing)", {
+        error: err?.message,
+      });
+      console.warn(
+        "⚠️ Failed to ensure general channel membership:",
+        err?.message
+      );
+    }
+  }
+
+  async createChimeResources(tenantName, userId) {
+    try {
+      // 1️⃣ Create App Instance
+      const appInstanceResp = await this.chimeClient.send(
+        new CreateAppInstanceCommand({
+          Name: tenantName,
+          Metadata: "Created via API",
+        })
+      );
+
+      const appInstanceArn = appInstanceResp.AppInstanceArn;
+      console.log("✅ CHIME_APP_INSTANCE_ARN:", appInstanceArn);
+
+      // 2️⃣ Create App Instance User (Bearer) using MongoDB user ID
+      const appInstanceUserId = userId || "backend-admin"; // Fallback to backend-admin if userId not provided
+      const userResp = await this.chimeClient.send(
+        new CreateAppInstanceUserCommand({
+          AppInstanceArn: appInstanceArn,
+          AppInstanceUserId: appInstanceUserId,
+          Name: `User ${appInstanceUserId}`,
+        })
+      );
+
+      const bearerArn = userResp.AppInstanceUserArn;
+      console.log("✅ CHIME_BEARER:", bearerArn);
+      console.log("✅ AppInstanceUserId:", appInstanceUserId);
+      // assign user aap instance role
+      const command = await new CreateAppInstanceAdminCommand({
+        AppInstanceAdminArn: bearerArn,
+        AppInstanceArn: appInstanceArn,
+      });
+
+      console.log(
+        "Creating App Instance Admin...",
+        command.input.AppInstanceAdminArn
+      );
+
+      // 3️⃣ Create IAM Role for Backend Admin
+      const trustPolicy = {
+        Version: "2012-10-17",
+        Statement: [
+          {
+            Effect: "Allow",
+            Principal: { Service: "lambda.amazonaws.com" },
+            Action: "sts:AssumeRole",
+          },
+        ],
+      };
+      const roleName = `ChimeBackendAdminRole-${Date.now()}`;
+      const roleResp = await this.iamClient.send(
+        new CreateRoleCommand({
+          RoleName: roleName,
+          AssumeRolePolicyDocument: JSON.stringify(trustPolicy),
+        })
+      );
+
+      const roleArn = roleResp.Role.Arn;
+      console.log("✅ CHIME_BACKEND_ADMIN_ROLE_ARN:", roleArn);
+
+      // Attach AmazonChimeSDK Policy
+      await this.iamClient.send(
+        new AttachRolePolicyCommand({
+          RoleName: roleName,
+          PolicyArn: "arn:aws:iam::aws:policy/AmazonChimeSDK",
+        })
+      );
+
+      // 4️⃣ Verify Role
+      const getRole = await this.iamClient.send(
+        new GetRoleCommand({ RoleName: roleName })
+      );
+
+      console.log("\n🎯 Final Values:");
+      console.log("CHIME_APP_INSTANCE_ARN =", appInstanceArn);
+      console.log("CHIME_BEARER =", bearerArn);
+      console.log("CHIME_BACKEND_ADMIN_ROLE_ARN =", getRole.Role.Arn);
+
+      return {
+        CHIME_APP_INSTANCE_ARN: appInstanceArn,
+        CHIME_BEARER: command.input.AppInstanceAdminArn,
+        CHIME_BACKEND_ADMIN_ROLE_ARN: getRole.Role.Arn,
+      };
+    } catch (error) {
+      console.error("❌ Error creating Chime resources:", error);
     }
   }
 }

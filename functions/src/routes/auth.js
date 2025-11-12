@@ -19,6 +19,7 @@ const codeExchangeSchema = Joi.object({
   code: Joi.string().required(),
   code_verifier: Joi.string().required(),
   redirect_uri: Joi.string().uri().optional(),
+  tenantId: Joi.string().optional(),
 });
 
 
@@ -91,5 +92,9 @@ router.post(
   validatePlatformToken,
   authController.revokeAllSessions
 );
+
+
+router.post('/onboard-tenant/', authController.onboardTenant);
+router.get('/tenants/organizations/', authController.getTenantOrganizations);
 
 export default router;

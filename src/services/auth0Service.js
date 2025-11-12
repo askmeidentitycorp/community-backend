@@ -862,7 +862,7 @@ class Auth0Service {
         tenantId: userDetails.tenantId,
       });
 
-      let channel = await Channel.findOne({ isDefaultGeneral: true });
+      let channel = await Channel.findOne({ isDefaultGeneral: true, tenantId: userDetails.tenantId });
       if (!channel) {
         console.log("✅ Creating default general channel");
         channel = await chimeMessagingService.createChannel({

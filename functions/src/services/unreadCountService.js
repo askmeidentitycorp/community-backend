@@ -76,7 +76,7 @@ class UnreadCountService {
    * @param {string} userId - The user ID
    * @returns {Object} Updated membership with unread count
    */
-  static async markAsRead(channelId, userId) {
+  static async markAsRead(channelId, userId,userDetails ={}) {
     try {
       console.log('[UnreadCountService] markAsRead start', { channelId, userId });
 
@@ -108,6 +108,8 @@ class UnreadCountService {
           lastReadAt: new Date(),
           lastMessageAt: new Date(),
           joinedAt: new Date(),
+          tenantId:userDetails.tenantId,
+          tenantUserLinkId:userDetails.tenantUserLinkId,
           isActive: true,
           notificationSettings: {
             enabled: true,
@@ -212,7 +214,7 @@ class UnreadCountService {
    * @param {Object} options - Additional options
    * @returns {Object} Created or existing membership
    */
-  static async ensureUnreadTracking(channelId, userId, options = {}) {
+  static async ensureUnreadTracking(channelId, userId, tenantId, tenantUserLinkId, options = {}) {
     try {
       console.log('[UnreadCountService] ensureUnreadTracking start', { channelId, userId });
 
@@ -237,6 +239,8 @@ class UnreadCountService {
       const membership = await ChannelMembership.create({
         channelId: new mongoose.Types.ObjectId(channelId),
         userId: new mongoose.Types.ObjectId(userId),
+        tenantId: new mongoose.Types.ObjectId(tenantId),
+        tenantUserLinkId: new mongoose.Types.ObjectId(tenantUserLinkId),
         unreadCount: 0, // Start with 0 unread messages
         lastReadAt: new Date(), // Mark as read when joining
         lastMessageAt: lastMessageAt,

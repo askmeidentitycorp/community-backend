@@ -47,14 +47,49 @@ connectDB().catch(err => {
 
 
 // CORS configuration
+// const corsOptions = {
+//   origin: ['http://localhost:5173', 'https://connect.askmeidentitty.com',''],
+//   methods: ['GET', 'POST', 'OPTIONS', 'DELETE', 'PUT', 'PATCH'],
+//   allowedHeaders: ['Authorization', 'Content-Type'],
+//   credentials: true,
+// };
+// app.use(cors(corsOptions));
+// CORS configuration for multi-tenant architecture
+const getAllowedOrigins = () => {
+  const allowedOrigins = [
+    'http://localhost:5173', // Local development
+    'http://localhost:3000',  // Local backend
+  ];
+  const productionDomain = 'community.arythmatic.cloud';
+  allowedOrigins.push(`https://${productionDomain}`);
+  allowedOrigins.push(`https://*.${productionDomain}`);
+  return allowedOrigins;
+};
+
 const corsOptions = {
-  origin: ['http://localhost:5173', 'https://connect.askmeidentitty.com'],
+  origin: function (origin, callback) {
+    const allowedOrigins = getAllowedOrigins();
+    const isAllowed = allowedOrigins.some(allowed => {
+      if (allowed.includes('*')) {
+        // Handle wildcard pattern: *.community.arythmatic.cloud
+        const pattern = allowed.replace('*', '.*');
+        return new RegExp(`^https://${pattern}$`).test(origin);
+      }
+      return origin === allowed;
+    });
+    
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'OPTIONS', 'DELETE', 'PUT', 'PATCH'],
   allowedHeaders: ['Authorization', 'Content-Type'],
   credentials: true,
 };
-app.use(cors(corsOptions));
 
+app.use(cors(corsOptions));
 // Explicit preflight handling (return 200 with headers)
 // app.options('*', (req, res) => {
 //   res.header('Access-Control-Allow-Origin', 'http://localhost:5173');

@@ -6,5 +6,5 @@ export const api = onRequest({
   region: 'us-central1',
   memory: '1GiB',
   timeoutSeconds: 540,
-  maxInstances: 10
+  maxInstances: 12
 }, app);

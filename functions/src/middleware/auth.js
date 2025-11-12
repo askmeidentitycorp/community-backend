@@ -5,6 +5,7 @@ import auth0Config from '../config/auth0.js';
 import { logger } from '../utils/logger.js';
 import { PERMISSIONS, ROLES } from './rbac.js';
 import Session from '../models/Session.js';
+import { log } from 'console';
 
 // Setup JWT validation for Auth0 tokens
 const jwksClient = jwksRsa({
@@ -130,9 +131,15 @@ export const validatePlatformToken = async (req, res, next) => {
       sessionId: session._id,
       roles,
       permissions,
+      tenantUserLinkId: decoded.tenant_user_link_id??'',// add this for indivdual chat or discuession
+      tenantId: decoded.tenant_id??'',// used for the channels
+      chimebearer: decoded.ChimeBerear || '',
+      chimeAppInstanceArn: decoded.ChimeAppInstanceArn || '',
+      chimeBackendAdminRoleArn: decoded.ChimeBackendAdminRoleArn || '',
       userName: decoded.name,
       userEmail: decoded.email,
     };
+    logger.info('Middleware: validatePlatformToken attached auth', { auth: req.auth });
     logger.info('Middleware: validatePlatformToken success', { userId: decoded?.userId });
     
     next();
@@ -170,6 +177,11 @@ export const tryValidatePlatformToken = (req, res, next) => {
       userId: decoded.userId || decoded.user_id,
       roles,
       permissions,
+       tenantUserLinkId: decoded.tenant_user_link_id??'',// add this for indivdual chat or discuession
+      tenantId: decoded.tenant_id??'',// used for the channels
+      chimebearer: decoded.ChimeBerear || '',
+      chimeAppInstanceArn: decoded.ChimeAppInstanceArn || '',
+      chimeBackendAdminRoleArn: decoded.ChimeBackendAdminRoleArn || '',
     };
     return next();
   } catch (error) {

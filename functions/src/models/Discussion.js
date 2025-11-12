@@ -20,6 +20,14 @@ const DiscussionSchema = new Schema(
       required: false,
       default: '',
     },
+    tenantUserId: {
+      type: String,
+      required: true,
+    },
+    tenantId: {
+      type: String,
+      required: true,
+    },
     author: {
       id: { type: String, required: false },
       name: { type: String, required: false },

@@ -8,6 +8,7 @@ import {
   ListChannelsCommand,
   ListChannelMembershipsCommand,
   CreateChannelModeratorCommand,
+  DeleteChannelModeratorCommand,
   DeleteChannelMembershipCommand,
   DeleteChannelCommand,
   DeleteChannelMessageCommand,
@@ -22,21 +23,21 @@ import {
 import Channel from "../models/Channel.js";
 import Message from "../models/Message.js";
 import { logger } from "../utils/logger.js";
+import { Tenant } from "../models/tenantModel.js";
+import { TenantUserLink } from "../models/TenantUserLinkModel.js";
 
 const REGION = process.env.AWS_REGION;
-const APP_INSTANCE_ARN = process.env.CHIME_APP_INSTANCE_ARN;
 
-if (!REGION || !APP_INSTANCE_ARN) {
+if (!REGION) {
   // eslint-disable-next-line no-console
   console.warn(
-    "[Chime] Missing AWS_REGION or CHIME_APP_INSTANCE_ARN. Chime service will be disabled until configured."
+    "[Chime] Missing AWS_REGION. Chime service will be disabled until configured."
   );
 }
 
 // Debug: Log AWS configuration
 console.log("[Chime] AWS Configuration:", {
   region: REGION,
-  appInstanceArn: APP_INSTANCE_ARN,
   hasAwsAccessKey: !!process.env.AWS_ACCESS_KEY_ID,
   hasAwsSecretKey: !!process.env.AWS_SECRET_ACCESS_KEY,
   hasAwsSessionToken: !!process.env.AWS_SESSION_TOKEN,
@@ -73,16 +74,127 @@ function toAppInstanceUserId(userId) {
   return String(userId);
 }
 
-async function ensureAppInstanceUser(user,userDetails = {}) {
+/**
+ * CRITICAL: Fetch tenant-specific Chime configuration for a user
+ * This function ALWAYS fetches fresh tenant data from the database
+ * and NEVER falls back to process.env values
+ * 
+ * This ensures all Chime operations use proper tenant-specific configuration
+ * regardless of which flow called them (auth, connection request, etc.)
+ * 
+ * @param {Object} user - User object with _id (required)
+ * @returns {Object} - Tenant and Chime configuration
+ * @throws {Error} - If user has no active tenant or tenant lacks Chime config
+ */
+async function getTenantChimeConfig(user) {
+  if (!user || !user._id) {
+    const error = new Error("User object with _id is required for Chime operations");
+    logger.error("[Chime] Invalid user provided to getTenantChimeConfig", {
+      hasUser: !!user,
+      hasUserId: !!user?._id,
+    });
+    throw error;
+  }
+
+  logger.info("[Chime] Fetching tenant Chime config from database", {
+    userId: user._id?.toString(),
+  });
+
+  // ALWAYS fetch from database - never use cached or passed-in values
+  // Find the user's active tenant link (most recent active one)
+  const tenantUserLink = await TenantUserLink.findOne({
+    userId: user._id.toString(),
+    status: "active",
+  }).sort({ createdAt: -1 });
+
+  if (!tenantUserLink) {
+    const error = new Error(
+      `No active tenant found for user ${user._id}. User must belong to an active tenant to use Chime.`
+    );
+    logger.error("[Chime] No active tenant link found", {
+      userId: user._id?.toString(),
+    });
+    throw error;
+  }
+
+  // Fetch tenant details from database
+  const tenant = await Tenant.findById(tenantUserLink.tenantId);
+
+  if (!tenant) {
+    const error = new Error(
+      `Tenant not found for ID: ${tenantUserLink.tenantId}`
+    );
+    logger.error("[Chime] Tenant not found in database", {
+      tenantId: tenantUserLink.tenantId,
+      userId: user._id?.toString(),
+    });
+    throw error;
+  }
+
+  // STRICT: Validate tenant has Chime configuration - NO fallbacks
+  if (!tenant.ChimeAppInstanceArn) {
+    const error = new Error(
+      `Tenant "${tenant.tenantName}" (${tenant._id}) does not have Chime configuration. Please configure ChimeAppInstanceArn for this tenant before using Chime features.`
+    );
+    logger.error("[Chime] Tenant missing required Chime configuration", {
+      tenantId: tenant._id.toString(),
+      tenantName: tenant.tenantName,
+      hasChimeAppInstanceArn: false,
+    });
+    throw error;
+  }
+
+  const config = {
+    tenantId: tenant._id.toString(),
+    tenantUserLinkId: tenantUserLink._id.toString(),
+    chimeAppInstanceArn: tenant.ChimeAppInstanceArn,
+    chimeBearer: tenant.ChimeBerear || "",
+    chimeBackendAdminRoleArn: tenant.ChimeBackendAdminRoleArn || "",
+    tenantName: tenant.tenantName,
+    tenantSlug: tenant.slug,
+  };
+
+  logger.info("[Chime] Tenant Chime config fetched successfully", {
+    tenantId: config.tenantId,
+    tenantName: config.tenantName,
+    tenantSlug: config.tenantSlug,
+    hasAppInstanceArn: !!config.chimeAppInstanceArn,
+    hasBearer: !!config.chimeBearer,
+    hasBackendAdminRole: !!config.chimeBackendAdminRoleArn,
+  });
+
+  return config;
+}
+
+/**
+ * DEPRECATED: Legacy wrapper for backward compatibility
+ * Use getTenantChimeConfig instead
+ */
+async function fetchTenantChimeConfig(user, providedUserDetails = {}) {
+  logger.warn("[Chime] fetchTenantChimeConfig is deprecated, use getTenantChimeConfig instead");
+  return getTenantChimeConfig(user);
+}
+
+async function ensureAppInstanceUser(user, userDetails = {}) {
   logger.info("[Chime] ensureAppInstanceUser start", {
     userId: user._id,
     userName: user.name,
   });
-  const APP_INSTANCE_ARN = userDetails.chimeAppInstanceArn || process.env.CHIME_APP_INSTANCE_ARN;
+  
   if (!user) throw new Error("User is required");
+  
+  // ALWAYS fetch fresh tenant-specific Chime config from database
+  // Ignore passed-in userDetails to ensure consistency
+  const config = await getTenantChimeConfig(user);
+  const APP_INSTANCE_ARN = config.chimeAppInstanceArn;
+  
   const appInstanceUserId = toAppInstanceUserId(user._id);
   const appInstanceUserArn = `${APP_INSTANCE_ARN}/user/${appInstanceUserId}`;
-  logger.info("[Chime] AppInstanceUser ARN", { appInstanceUserArn });
+  logger.info("[Chime] AppInstanceUser ARN", { 
+    appInstanceUserArn,
+    tenantId: config.tenantId,
+    tenantName: config.tenantName,
+  });
 
   try {
     await adminIdentityClient.send(
@@ -115,10 +227,11 @@ async function ensureAppInstanceUser(user,userDetails = {}) {
         AppInstanceArn: APP_INSTANCE_ARN,
         AppInstanceUserId: appInstanceUserId,
         Name: user.name || user.email || appInstanceUserId,
-      Metadata: {
-        Auth0Id: user.auth0Id,
-        Email: user.email
-      },
+        // Metadata must be a JSON string, not an object
+        Metadata: JSON.stringify({
+          Auth0Id: user.auth0Id,
+          Email: user.email
+        }),
       })
     );
     logger.info("[Chime] AppInstanceUser created successfully", {
@@ -133,17 +246,23 @@ async function promoteToAppInstanceAdmin(user, userDetails = {}) {
     userId: user._id,
     userName: user.name,
   });
-  const APP_INSTANCE_ARN = userDetails.chimeAppInstanceArn || process.env.CHIME_APP_INSTANCE_ARN;
+  
   if (!user) throw new Error("User is required");
+  
+  // ALWAYS fetch fresh tenant-specific Chime config from database
+  const config = await getTenantChimeConfig(user);
+  const APP_INSTANCE_ARN = config.chimeAppInstanceArn;
 
   try {
     // Ensure the AppInstanceUser exists first
-    const appInstanceUserArn = await ensureAppInstanceUser(user, userDetails);
+    const appInstanceUserArn = await ensureAppInstanceUser(user);
 
     // Promote the user to AppInstanceAdmin
     logger.info("[Chime] Promoting user to AppInstanceAdmin", {
       appInstanceUserArn,
       userName: user.name,
+      tenantId: config.tenantId,
+      tenantName: config.tenantName,
     });
     await adminIdentityClient.send(
       new CreateAppInstanceAdminCommand({
@@ -185,15 +304,18 @@ async function checkChannelExistsInChime({
     isDefaultGeneral,
     userId: user._id,
   });
- const APP_INSTANCE_ARN = userDetails.chimeAppInstanceArn || process.env.CHIME_APP_INSTANCE_ARN;
-  if (!APP_INSTANCE_ARN)
-    throw new Error("CHIME_APP_INSTANCE_ARN not configured");
+  
+  // ALWAYS fetch fresh tenant-specific Chime config from database
+  const config = await getTenantChimeConfig(user);
+  const APP_INSTANCE_ARN = config.chimeAppInstanceArn;
 
   try {
     // Ensure we have a valid user ARN for ChimeBearer
-    const userArn = await ensureAppInstanceUser(user,userDetails);
+    const userArn = await ensureAppInstanceUser(user);
     logger.info("[Chime] Using user ARN as ChimeBearer (listChannels)", {
       chimeBearer: userArn,
+      tenantId: config.tenantId,
+      tenantName: config.tenantName,
     });
 
     // List all channels in the app instance to find one with matching name
@@ -383,7 +505,10 @@ async function createChannel({
   description,
   isPrivate,
   createdByUser,
-  isDefaultGeneral = false, from = null, members = [], admins = [],
+  isDefaultGeneral = false, 
+  from = null, 
+  members = [], 
+  admins = [],
   userDetails = {},
 }) {
   logger.info("[Chime] createChannel start", {
@@ -391,21 +516,22 @@ async function createChannel({
     isDefaultGeneral,
     createdByUser: createdByUser._id,
   });
-  const APP_INSTANCE_ARN = userDetails.chimeAppInstanceArn || process.env.CHIME_APP_INSTANCE_ARN;
-  if (!APP_INSTANCE_ARN)
-    throw new Error("CHIME_APP_INSTANCE_ARN not configured");
+  
+  // ALWAYS fetch fresh tenant-specific Chime config from database
+  const config = await getTenantChimeConfig(createdByUser);
+  const APP_INSTANCE_ARN = config.chimeAppInstanceArn;
 
   // First, check if channel already exists in Chime
   const existingChimeChannel = await checkChannelExistsInChime({
     name,
     isDefaultGeneral,
     user: createdByUser,
-    userDetails,
   });
 
   if (existingChimeChannel) {
     logger.info("[Chime] Channel already exists in Chime, syncing to MongoDB", {
       channelArn: existingChimeChannel.ChannelArn,
+      tenantId: config.tenantId,
     });
     return await syncChannelFromChime({
       chimeChannel: existingChimeChannel,
@@ -414,12 +540,14 @@ async function createChannel({
   }
 
   // Channel doesn't exist in Chime, create it
-  const creatorArn = await ensureAppInstanceUser(createdByUser,userDetails);
+  const creatorArn = await ensureAppInstanceUser(createdByUser);
   const privacy = isPrivate ? "PRIVATE" : "PUBLIC";
   logger.info("[Chime] Creating new Chime channel", {
     name,
     privacy,
     creatorArn,
+    tenantId: config.tenantId,
+    tenantName: config.tenantName,
   });
 
   const res = await adminMessagingClient.send(
@@ -446,11 +574,15 @@ async function createChannel({
     members: from === 'connection' ? [members[0], members[1]] : [createdByUser._id],
     admins: from === 'connection' ? [admins[0], admins[1]] : [createdByUser._id],
     createdBy: createdByUser._id,
-    tenantId: userDetails.tenantId || "",
+    tenantId: config.tenantId,
     isDefaultGeneral: !!isDefaultGeneral,
     chime: { channelArn, mode: 'RESTRICTED', privacy, type: from === 'connection' ? 'dm' : 'channel' }
   })
-  logger.info('[Chime] Channel saved to MongoDB', { channelId: channel._id })
+  logger.info('[Chime] Channel saved to MongoDB', { 
+    channelId: channel._id,
+    tenantId: config.tenantId,
+    tenantName: config.tenantName,
+  })
   
   await adminMessagingClient.send(new CreateChannelMembershipCommand({
     ChannelArn: channelArn,
@@ -490,6 +622,10 @@ async function addMember({ channelId, user, operatorUser, userDetails = {} }) {
     userId: user._id,
     operatorUserId: actingUser._id,
   });
+  
+  // ALWAYS fetch fresh tenant-specific Chime config from database
+  const config = await getTenantChimeConfig(user);
+  
   const channel = await Channel.findById(channelId);
   if (!channel || !channel?.chime?.channelArn) {
     logger.error("[Chime] Channel not found or not mapped to Chime", {
@@ -499,12 +635,14 @@ async function addMember({ channelId, user, operatorUser, userDetails = {} }) {
     });
     throw new Error("Channel not found or not mapped to Chime");
   }
-  const memberArn = await ensureAppInstanceUser(user, userDetails);
-  const operatorArn = await ensureAppInstanceUser(actingUser, userDetails);
+  const memberArn = await ensureAppInstanceUser(user);
+  const operatorArn = await ensureAppInstanceUser(actingUser);
   logger.info("[Chime] Adding member to Chime channel", {
     channelArn: channel.chime.channelArn,
     memberArn,
     operatorArn,
+    tenantId: config.tenantId,
+    tenantName: config.tenantName,
   });
   logger.info("[Chime] Using ChimeBearer for addMember", {
     chimeBearer: operatorArn,
@@ -576,18 +714,20 @@ async function addMember({ channelId, user, operatorUser, userDetails = {} }) {
     });
 
     // Ensure unread count tracking exists for the new member
+    // Use fresh tenant config instead of potentially empty userDetails
     try {
       const UnreadCountService = (await import("./unreadCountService.js"))
         .default;
       await UnreadCountService.ensureUnreadTracking(
         channelId,
         user._id.toString(),
-        userDetails.tenantId,
-        userDetails.tenantUserLinkId
+        config.tenantId,
+        config.tenantUserLinkId
       );
       logger.info("[Chime] Unread count tracking ensured for new member", {
         channelId,
         userId: user._id,
+        tenantId: config.tenantId,
       });
     } catch (unreadError) {
       // Log error but don't fail the membership addition
@@ -611,6 +751,10 @@ async function ensureChimeMembership({ channelId, user, userDetails = {} }) {
     channelId,
     userId: user._id,
   });
+  
+  // ALWAYS fetch fresh tenant-specific Chime config from database
+  const config = await getTenantChimeConfig(user);
+  
   const channel = await Channel.findById(channelId);
   if (!channel || !channel?.chime?.channelArn) {
     logger.error("[Chime] Channel not found or not mapped to Chime", {
@@ -620,10 +764,12 @@ async function ensureChimeMembership({ channelId, user, userDetails = {} }) {
     });
     throw new Error("Channel not found or not mapped to Chime");
   }
-  const userArn = await ensureAppInstanceUser(user, userDetails);
+  const userArn = await ensureAppInstanceUser(user);
   logger.info("[Chime] Ensuring Chime membership", {
     channelArn: channel.chime.channelArn,
     userArn,
+    tenantId: config.tenantId,
+    tenantName: config.tenantName,
   });
 
   try {
@@ -658,17 +804,30 @@ async function ensureChimeMembership({ channelId, user, userDetails = {} }) {
 }
 
 async function sendMessage({ channelId, author, content, userDetails = {} }) {
+  logger.info("[Chime] sendMessage start", {
+    channelId,
+    authorId: author._id,
+  });
+  
+  // ALWAYS fetch fresh tenant-specific Chime config from database
+  const config = await getTenantChimeConfig(author);
+  
   const channel = await Channel.findById(channelId);
   if (!channel || !channel?.chime?.channelArn)
     throw new Error("Channel not found or not mapped to Chime");
-  const authorArn = await ensureAppInstanceUser(author, userDetails);
+  const authorArn = await ensureAppInstanceUser(author);
 
   // Ensure the user is a member of the Chime channel before sending a message
   logger.info(
     "[Chime] Ensuring user is member of channel before sending message",
-    { channelId, userId: author._id }
+    { 
+      channelId, 
+      userId: author._id,
+      tenantId: config.tenantId,
+      tenantName: config.tenantName,
+    }
   );
-  await addMember({ channelId, user: author, userDetails });
+  await addMember({ channelId, user: author });
 
   // Add a small delay to allow Chime membership to propagate
   await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -683,24 +842,36 @@ async function sendMessage({ channelId, author, content, userDetails = {} }) {
       Persistence: "PERSISTENT",
     })
   );
+  
+  // Use fresh tenant config instead of potentially empty userDetails
   const message = await Message.create({
     channelId: channel._id,
     authorId: author._id,
     content,
     isEdited: false,
-    tenantUserLinkId: userDetails.tenantUserLinkId || null,
-    tenantId: userDetails.tenantId || null,
+    tenantUserLinkId: config.tenantUserLinkId,
+    tenantId: config.tenantId,
     externalRef: {
       provider: "chime",
       messageId: res.MessageId,
       channelArn: channel.chime.channelArn,
     },
   });
+  
+  logger.info("[Chime] Message sent successfully", {
+    messageId: res.MessageId,
+    tenantId: config.tenantId,
+  });
+  
   return { message, chime: { messageId: res.MessageId } };
 }
 
 async function listMessages({ channelId, nextToken, pageSize = 50, user, userDetails = {} }) {
   logger.info("[Chime] listMessages start", { channelId, nextToken, pageSize });
+  
+  // ALWAYS fetch fresh tenant-specific Chime config from database
+  const config = await getTenantChimeConfig(user);
+  
   const channel = await Channel.findById(channelId);
   if (!channel || !channel?.chime?.channelArn) {
     logger.error("[Chime] Channel not found or not mapped to Chime", {
@@ -712,12 +883,15 @@ async function listMessages({ channelId, nextToken, pageSize = 50, user, userDet
   }
   logger.info("[Chime] Channel found", {
     channelArn: channel.chime.channelArn,
+    tenantId: config.tenantId,
+    tenantName: config.tenantName,
   });
 
   // Get the user's AppInstanceUser ARN for ChimeBearer
-  const appInstanceUserArn = await ensureAppInstanceUser(user, userDetails);
+  const appInstanceUserArn = await ensureAppInstanceUser(user);
   logger.info("[Chime] Using AppInstanceUser ARN as ChimeBearer", {
     appInstanceUserArn,
+    tenantId: config.tenantId,
   });
 
   // Backend-side listing for now; alternatively the frontend can list directly using Cognito credentials
@@ -876,10 +1050,25 @@ export default {
   sendMessage,
   listMessages,
   async deleteChannel({ channelId, operatorUser, userDetails = {} }) {
+    logger.info("[Chime] deleteChannel start", {
+      channelId,
+      operatorUserId: operatorUser._id,
+    });
+    
+    // ALWAYS fetch fresh tenant-specific Chime config from database
+    const config = await getTenantChimeConfig(operatorUser);
+    
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const operatorArn = await ensureAppInstanceUser(operatorUser, userDetails);
+    const operatorArn = await ensureAppInstanceUser(operatorUser);
+    
+    logger.info("[Chime] Deleting channel", {
+      channelArn: channel.chime.channelArn,
+      tenantId: config.tenantId,
+      tenantName: config.tenantName,
+    });
+    
     await adminMessagingClient.send(
       new DeleteChannelCommand({
         ChannelArn: channel.chime.channelArn,
@@ -888,13 +1077,36 @@ export default {
     );
     await Channel.deleteOne({ _id: channelId });
     await Message.deleteMany({ channelId });
+    
+    logger.info("[Chime] Channel deleted successfully", {
+      channelId,
+      tenantId: config.tenantId,
+    });
+    
     return { deleted: true };
   },
   async deleteChannelMessage({ channelId, messageId, operatorUser, userDetails = {} }) {
+    logger.info("[Chime] deleteChannelMessage start", {
+      channelId,
+      messageId,
+      operatorUserId: operatorUser._id,
+    });
+    
+    // ALWAYS fetch fresh tenant-specific Chime config from database
+    const config = await getTenantChimeConfig(operatorUser);
+    
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const operatorArn = await ensureAppInstanceUser(operatorUser, userDetails);
+    const operatorArn = await ensureAppInstanceUser(operatorUser);
+    
+    logger.info("[Chime] Deleting channel message", {
+      channelArn: channel.chime.channelArn,
+      messageId,
+      tenantId: config.tenantId,
+      tenantName: config.tenantName,
+    });
+    
     await adminMessagingClient.send(
       new DeleteChannelMessageCommand({
         ChannelArn: channel.chime.channelArn,
@@ -907,14 +1119,39 @@ export default {
       "externalRef.provider": "chime",
       "externalRef.messageId": messageId,
     });
+    
+    logger.info("[Chime] Message deleted successfully", {
+      channelId,
+      messageId,
+      tenantId: config.tenantId,
+    });
+    
     return { deleted: true };
   },
   async grantChannelModerator({ channelId, user, operatorUser, userDetails = {} }) {
+    const actingUser = operatorUser || user;
+    logger.info("[Chime] grantChannelModerator start", {
+      channelId,
+      userId: user._id,
+      operatorUserId: actingUser._id,
+    });
+    
+    // ALWAYS fetch fresh tenant-specific Chime config from database
+    const config = await getTenantChimeConfig(actingUser);
+    
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const memberArn = await ensureAppInstanceUser(user, userDetails);
-    const operatorArn = await ensureAppInstanceUser(operatorUser || user, userDetails);
+    const memberArn = await ensureAppInstanceUser(user);
+    const operatorArn = await ensureAppInstanceUser(actingUser);
+    
+    logger.info("[Chime] Granting channel moderator privileges", {
+      channelArn: channel.chime.channelArn,
+      memberArn,
+      tenantId: config.tenantId,
+      tenantName: config.tenantName,
+    });
+    
     await adminMessagingClient.send(
       new CreateChannelModeratorCommand({
         ChannelArn: channel.chime.channelArn,
@@ -922,14 +1159,39 @@ export default {
         ChimeBearer: operatorArn,
       })
     );
+    
+    logger.info("[Chime] Channel moderator granted successfully", {
+      channelId,
+      userId: user._id,
+      tenantId: config.tenantId,
+    });
+    
     return { success: true };
   },
   async revokeChannelModerator({ channelId, user, operatorUser, userDetails = {} }) {
+    const actingUser = operatorUser || user;
+    logger.info("[Chime] revokeChannelModerator start", {
+      channelId,
+      userId: user._id,
+      operatorUserId: actingUser._id,
+    });
+    
+    // ALWAYS fetch fresh tenant-specific Chime config from database
+    const config = await getTenantChimeConfig(actingUser);
+    
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const memberArn = await ensureAppInstanceUser(user, userDetails);
-    const operatorArn = await ensureAppInstanceUser(operatorUser || user, userDetails);
+    const memberArn = await ensureAppInstanceUser(user);
+    const operatorArn = await ensureAppInstanceUser(actingUser);
+    
+    logger.info("[Chime] Revoking channel moderator privileges", {
+      channelArn: channel.chime.channelArn,
+      memberArn,
+      tenantId: config.tenantId,
+      tenantName: config.tenantName,
+    });
+    
     await adminMessagingClient.send(
       new DeleteChannelModeratorCommand({
         ChannelArn: channel.chime.channelArn,
@@ -937,17 +1199,36 @@ export default {
         ChimeBearer: operatorArn,
       })
     );
+    
+    logger.info("[Chime] Channel moderator revoked successfully", {
+      channelId,
+      userId: user._id,
+      tenantId: config.tenantId,
+    });
+    
     return { success: true };
   },
   async redactChannelMessage({ channelId, messageId, operatorUser, userDetails = {} }) {
+    logger.info("[Chime] redactChannelMessage start", {
+      channelId,
+      messageId,
+      operatorUserId: operatorUser._id,
+    });
+    
+    // ALWAYS fetch fresh tenant-specific Chime config from database
+    const config = await getTenantChimeConfig(operatorUser);
+    
     const channel = await Channel.findById(channelId);
     if (!channel || !channel?.chime?.channelArn)
       throw new Error("Channel not found or not mapped to Chime");
-    const operatorArn = await ensureAppInstanceUser(operatorUser, userDetails);
+    const operatorArn = await ensureAppInstanceUser(operatorUser);
+    
     logger.info("[Chime] Redacting channel message", {
       channelId,
       messageId,
       operatorArn,
+      tenantId: config.tenantId,
+      tenantName: config.tenantName,
     });
 
     await adminMessagingClient.send(
@@ -979,7 +1260,9 @@ export default {
     logger.info("[Chime] Message redacted successfully", {
       channelId,
       messageId,
+      tenantId: config.tenantId,
     });
+    
     return { redacted: true };
   },
 };

@@ -5,6 +5,8 @@ const ChannelRoleAssignmentSchema = new Schema(
   {
     channelId: { type: Schema.Types.ObjectId, ref: 'Channel', required: true, index: true },
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    tenantId: { type: Schema.Types.ObjectId, ref: 'Tenant', required: true },
+    tenantUserLinkId: { type: Schema.Types.ObjectId, ref: 'TenantUserLink', required: true },
     role: { type: String, required: true, enum: ['moderator'] },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
   },

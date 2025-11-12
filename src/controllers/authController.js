@@ -21,6 +21,87 @@ class AuthController {
   constructor() {
     this.auth0Service = auth0Service;
   }
+
+  /**
+   * Fetch complete tenant and Chime details for a user
+   * This ensures all Chime operations have the necessary configuration
+   */
+  static async getUserTenantDetails(user) {
+    try {
+      logger.info("Auth: getUserTenantDetails start", {
+        userId: user._id?.toString(),
+      });
+
+      // Find the user's primary tenant link (most recent or active)
+      const tenantUserLink = await TenantUserLink.findOne({
+        userId: user._id.toString(),
+        isActive: true,
+      }).sort({ createdAt: -1 });
+
+      if (!tenantUserLink) {
+        logger.warn("Auth: no active tenant link found for user", {
+          userId: user._id?.toString(),
+        });
+        return {
+          tenantId: null,
+          tenantUserLinkId: null,
+          chimeAppInstanceArn: process.env.CHIME_APP_INSTANCE_ARN || "",
+          chimeBearer: process.env.CHIME_BEARER || "",
+          chimeBackendAdminRoleArn:
+            process.env.CHIME_BACKEND_ADMIN_ROLE_ARN || "",
+        };
+      }
+
+      // Fetch tenant details
+      const tenant = await Tenant.findById(tenantUserLink.tenantId);
+
+      if (!tenant) {
+        logger.warn("Auth: tenant not found", {
+          tenantId: tenantUserLink.tenantId,
+        });
+        return {
+          tenantId: tenantUserLink.tenantId,
+          tenantUserLinkId: tenantUserLink._id.toString(),
+          chimeAppInstanceArn: process.env.CHIME_APP_INSTANCE_ARN || "",
+          chimeBearer: process.env.CHIME_BEARER || "",
+          chimeBackendAdminRoleArn:
+            process.env.CHIME_BACKEND_ADMIN_ROLE_ARN || "",
+        };
+      }
+
+      logger.info("Auth: tenant details fetched", {
+        tenantId: tenant._id.toString(),
+        hasChimeConfig: !!tenant.ChimeAppInstanceArn,
+      });
+
+      return {
+        tenantId: tenant._id.toString(),
+        tenantUserLinkId: tenantUserLink._id.toString(),
+        chimeAppInstanceArn:
+          tenant.ChimeAppInstanceArn || process.env.CHIME_APP_INSTANCE_ARN || "",
+        chimeBearer: tenant.ChimeBerear || process.env.CHIME_BEARER || "",
+        chimeBackendAdminRoleArn:
+          tenant.ChimeBackendAdminRoleArn ||
+          process.env.CHIME_BACKEND_ADMIN_ROLE_ARN ||
+          "",
+      };
+    } catch (error) {
+      logger.error("Auth: getUserTenantDetails error", {
+        error: error?.message,
+        userId: user._id?.toString(),
+      });
+      // Return defaults on error
+      return {
+        tenantId: null,
+        tenantUserLinkId: null,
+        chimeAppInstanceArn: process.env.CHIME_APP_INSTANCE_ARN || "",
+        chimeBearer: process.env.CHIME_BEARER || "",
+        chimeBackendAdminRoleArn:
+          process.env.CHIME_BACKEND_ADMIN_ROLE_ARN || "",
+      };
+    }
+  }
+
   // Ensure default general channel exists and user is a member (best-effort)
   static async ensureGeneralForUser(user, chimeDetails = {}) {
     try {
