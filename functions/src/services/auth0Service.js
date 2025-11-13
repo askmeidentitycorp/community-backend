@@ -948,18 +948,26 @@ class Auth0Service {
       const bearerArn = userResp.AppInstanceUserArn;
       console.log("✅ CHIME_BEARER:", bearerArn);
       console.log("✅ AppInstanceUserId:", appInstanceUserId);
-      // assign user aap instance role
-      const command = await new CreateAppInstanceAdminCommand({
-        AppInstanceAdminArn: bearerArn,
-        AppInstanceArn: appInstanceArn,
-      });
+      
+      // 3️⃣ Promote user to AppInstanceAdmin
+      console.log("Promoting user to AppInstanceAdmin...");
+      try {
+        await this.chimeClient.send(new CreateAppInstanceAdminCommand({
+          AppInstanceAdminArn: bearerArn,
+          AppInstanceArn: appInstanceArn,
+        }));
+        console.log("✅ User promoted to AppInstanceAdmin successfully");
+      } catch (error) {
+        // If already admin (ConflictException), that's okay
+        if (error.name === 'ConflictException') {
+          console.log("✅ User is already an AppInstanceAdmin");
+        } else {
+          console.error("⚠️ Failed to promote to AppInstanceAdmin:", error.message);
+          // Don't throw - continue with tenant creation even if admin promotion fails
+        }
+      }
 
-      console.log(
-        "Creating App Instance Admin...",
-        command.input.AppInstanceAdminArn
-      );
-
-      // 3️⃣ Create IAM Role for Backend Admin
+      // 4️⃣ Create IAM Role for Backend Admin
       const trustPolicy = {
         Version: "2012-10-17",
         Statement: [
@@ -989,7 +997,7 @@ class Auth0Service {
         })
       );
 
-      // 4️⃣ Verify Role
+      // 5️⃣ Verify Role
       const getRole = await this.iamClient.send(
         new GetRoleCommand({ RoleName: roleName })
       );
@@ -1001,7 +1009,7 @@ class Auth0Service {
 
       return {
         CHIME_APP_INSTANCE_ARN: appInstanceArn,
-        CHIME_BEARER: command.input.AppInstanceAdminArn,
+        CHIME_BEARER: bearerArn,
         CHIME_BACKEND_ADMIN_ROLE_ARN: getRole.Role.Arn,
       };
     } catch (error) {
