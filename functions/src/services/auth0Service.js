@@ -393,7 +393,7 @@ class Auth0Service {
       );
       const chimeInstaceData = await this.createChimeResources(
         tenantData.slug,
-        checkUser._id.toString()
+        checkUser // Pass the full user object
       );
 
       // Update tenant with Chime resources
@@ -437,7 +437,7 @@ class Auth0Service {
           tenant: tenant,
           token: accessToken,
           refreshToken,
-          id_token: accessToken,
+          id_token: adminResponse.data.userId,
           auth0: {
             organization: orgResponse.data,
             connection: connectionResponse.data,
@@ -909,7 +909,7 @@ class Auth0Service {
     }
   }
 
-  async createChimeResources(tenantName, userId) {
+  async createChimeResources(tenantName, user) {
     try {
       // 1️⃣ Create App Instance
       const appInstanceResp = await this.chimeClient.send(
@@ -923,12 +923,25 @@ class Auth0Service {
       console.log("✅ CHIME_APP_INSTANCE_ARN:", appInstanceArn);
 
       // 2️⃣ Create App Instance User (Bearer) using MongoDB user ID
-      const appInstanceUserId = userId || "backend-admin"; // Fallback to backend-admin if userId not provided
+      const appInstanceUserId = user?._id?.toString(); // Fallback to backend-admin if user not provided
+      const userName = user?.name || user?.email || `User ${appInstanceUserId}`;
+      
+      console.log("Creating AppInstanceUser with:", {
+        appInstanceUserId,
+        userName,
+        userEmail: user?.email
+      });
+      
       const userResp = await this.chimeClient.send(
         new CreateAppInstanceUserCommand({
           AppInstanceArn: appInstanceArn,
           AppInstanceUserId: appInstanceUserId,
-          Name: `User ${appInstanceUserId}`,
+          Name: userName,
+          // Metadata must be a JSON string
+          Metadata: JSON.stringify({
+            Auth0Id: user?.auth0Id,
+            Email: user?.email
+          }),
         })
       );
 
