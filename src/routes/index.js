@@ -7,6 +7,7 @@ import channelRoutes from './channels.js';
 import mediaRoutes from './media.js';
 import mentionsRoutes from './mentions.js';
 import connectionRoutes from './connection.js';
+import tenantConfigRoutes from './tenantConfig.js';
 
 const router = express.Router();
 
@@ -19,5 +20,6 @@ router.use('/', channelRoutes); // Channel + messages routes
 router.use('/', mediaRoutes); // Media upload routes
 router.use('/mentions', mentionsRoutes); // Mentions routes
 router.use('/', connectionRoutes); // Connection routes
+router.use('/', tenantConfigRoutes); // Tenant configuration routes
 
 export default router;
