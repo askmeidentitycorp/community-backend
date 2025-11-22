@@ -1,5 +1,6 @@
 import { AppError } from '../utils/errorHandler.js';
 import Discussion from '../models/Discussion.js';
+import Comment from '../models/Comment.js';
 import { logger } from '../utils/logger.js';
 import User from '../models/User.js';
 import { uploadBufferToS3 } from '../services/mediaService.js'
@@ -89,6 +90,33 @@ class DiscussionController {
 
       const total = await Discussion.countDocuments(query);
 
+      // Get comment counts for all discussions (parent-level only)
+      const discussionIds = discussions.map(d => d._id);
+      let commentCounts = {};
+      if (discussionIds.length > 0) {
+        const commentAggregation = await Comment.aggregate([
+          {
+            $match: {
+              discussionId: { $in: discussionIds },
+              $or: [
+                { parentId: { $exists: false } },
+                { parentId: null }
+              ]
+            }
+          },
+          {
+            $group: {
+              _id: '$discussionId',
+              count: { $sum: 1 }
+            }
+          }
+        ]);
+        commentCounts = commentAggregation.reduce((acc, item) => {
+          acc[String(item._id)] = item.count;
+          return acc;
+        }, {});
+      }
+
       res.status(200).json({
         discussions: discussions.map(d => ({
           id: d._id,
@@ -108,6 +136,7 @@ class DiscussionController {
           dislikesCount: (d.dislikes || []).length,
           likedByMe: req.auth?.userId ? (d.likes || []).some(u => String(u) === String(req.auth.userId)) : false,
           dislikedByMe: req.auth?.userId ? (d.dislikes || []).some(u => String(u) === String(req.auth.userId)) : false,
+          comments: commentCounts[String(d._id)] || 0,
           createdAt: d.createdAt,
           updatedAt: d.updatedAt,
         })),

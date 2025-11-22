@@ -18,6 +18,22 @@ const ChannelSchema = new Schema(
       type: String,
       trim: true,
     },
+    topic: {
+      type: [{
+        name: {
+          type: String,
+          required: true,
+          trim: true,
+        },
+        color: {
+          type: String,
+          required: true,
+          trim: true,
+          match: /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$/, // Hex color format
+        }
+      }],
+      default: [],
+    },
     isPrivate: {
       type: Boolean,
       default: false,

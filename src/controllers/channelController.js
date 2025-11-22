@@ -9,7 +9,7 @@ import UnreadCountService from '../services/unreadCountService.js'
 
 export const createChannel = async (req, res, next) => {
   try {
-    const { name, description, isPrivate, isDefaultGeneral } = req.body
+    const { name, description, topic, isPrivate, isDefaultGeneral } = req.body
     if (!req.auth?.userId) return next(new AppError('Unauthorized', 401, 'UNAUTHORIZED'))
     const creator = await User.findById(req.auth.userId)
     if (!creator) return next(new AppError('User not found', 404, 'NOT_FOUND'))
@@ -17,7 +17,7 @@ export const createChannel = async (req, res, next) => {
       const exists = await Channel.findOne({ isDefaultGeneral: true })
       if (exists) return next(new AppError('General channel already exists', 400, 'ALREADY_EXISTS'))
     }
-    const channel = await chimeMessagingService.createChannel({ name, description, isPrivate, createdByUser: creator, isDefaultGeneral, userDetails: req.auth })
+    const channel = await chimeMessagingService.createChannel({ name, description, topic, isPrivate, createdByUser: creator, isDefaultGeneral, userDetails: req.auth })
     return res.status(201).json({ channel })
   } catch (err) {
     return next(err)

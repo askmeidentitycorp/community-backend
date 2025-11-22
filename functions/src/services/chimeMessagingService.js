@@ -503,6 +503,7 @@ async function syncChannelFromChime({ chimeChannel, createdByUser }) {
 async function createChannel({
   name,
   description,
+  topic,
   isPrivate,
   createdByUser,
   isDefaultGeneral = false, 
@@ -566,10 +567,37 @@ async function createChannel({
   );
   const channelArn = res.ChannelArn;
   logger.info("[Chime] Chime channel created", { channelArn });
-
+  
+  let topicArray = []
+  if (topic) {
+    if (Array.isArray(topic)) {
+      // Validate and normalize colors to hex format
+      topicArray = topic.map(t => {
+        const name = typeof t === 'string' ? t : (t?.name || '')
+        let color = typeof t === 'object' && t?.color ? t.color : '#60BC26'
+        
+        // Ensure color is in hex format
+        if (!color.startsWith('#')) {
+          color = '#60BC26' // Default if not hex
+        } else {
+          // Validate hex format (6 or 8 characters after #)
+          const hexPattern = /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{8})$/
+          if (!hexPattern.test(color)) {
+            color = '#60BC26' // Default if invalid format
+          }
+        }
+        
+        return { name: name.trim(), color }
+      }).filter(t => t.name) // Remove entries without names
+    } else if (typeof topic === 'string') {
+      // Backward compatibility: convert string to array format
+      topicArray = [{ name: topic.trim(), color: '#60BC26' }]
+    }
+  }
   const channel = await Channel.create({
     name,
     description,
+    topic: topicArray.length > 0 ? topicArray : undefined,
     isPrivate: !!isPrivate,
     members: from === 'connection' ? [members[0], members[1]] : [createdByUser._id],
     admins: from === 'connection' ? [admins[0], admins[1]] : [createdByUser._id],
